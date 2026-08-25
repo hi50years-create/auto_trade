@@ -290,7 +290,12 @@ class KISClient(BrokerBase):
             return 0.0
 
     # ------------------------------------------------------------ 스크리닝 (순위 API)
-    def get_fluctuation_rank(self, top_n: int = 30) -> list[dict]:
+    # 이 순위 API들은 한 번 호출에 최대 30건까지만 반환하고 연속조회(tr_cont=M)를 지원하지
+    # 않는다 (실측 확인됨). 대신 fid_input_iscd 로 코스피(0001)/코스닥(1001)을 나눠서 각각
+    # 호출하면 시장별로 별도 상위 30건을 받을 수 있어 실질적으로 커버리지를 넓힐 수 있다.
+    MARKET_ISCD = {"ALL": "0000", "KOSPI": "0001", "KOSDAQ": "1001"}
+
+    def get_fluctuation_rank(self, top_n: int = 30, market: str = "ALL") -> list[dict]:
         """등락률 상위 종목 (상한가/급등 후보 탐색용). 필드/파라미터는 KIS 문서 재검증 권장."""
         data = self._get(
             "/uapi/domestic-stock/v1/ranking/fluctuation",
@@ -298,7 +303,7 @@ class KISClient(BrokerBase):
             {
                 "fid_cond_mrkt_div_code": "J",
                 "fid_cond_scr_div_code": "20170",
-                "fid_input_iscd": "0000",
+                "fid_input_iscd": self.MARKET_ISCD[market],
                 "fid_rank_sort_cls_code": "0",  # 0: 상승율순
                 "fid_input_cnt_1": "0",
                 "fid_prc_cls_code": "0",
@@ -314,17 +319,20 @@ class KISClient(BrokerBase):
         )
         return (data.get("output", []) or [])[:top_n]
 
-    def get_volume_rank(self, top_n: int = 30) -> list[dict]:
-        """거래대금/거래량 상위 종목. 필드/파라미터는 KIS 문서 재검증 권장."""
+    def get_volume_rank(self, top_n: int = 30, market: str = "ALL") -> list[dict]:
+        """거래대금 상위 종목. fid_blng_cls_code=3(거래금액순)을 사용한다 - 기본값인
+        평균거래량순(0)으로는 저가 레버리지/인버스 ETF가 상위권을 대량 차지해
+        실제 개별종목 후보를 밀어내는 현상이 실측으로 확인되었다.
+        필드/파라미터는 KIS 문서 재검증 권장."""
         data = self._get(
             "/uapi/domestic-stock/v1/quotations/volume-rank",
             TR_VOLUME_RANK,
             {
                 "fid_cond_mrkt_div_code": "J",
                 "fid_cond_scr_div_code": "20171",
-                "fid_input_iscd": "0000",
+                "fid_input_iscd": self.MARKET_ISCD[market],
                 "fid_div_cls_code": "0",
-                "fid_blng_cls_code": "0",
+                "fid_blng_cls_code": "3",  # 3: 거래금액순
                 "fid_trgt_cls_code": "111111111",
                 "fid_trgt_exls_cls_code": "0000000000",
                 "fid_input_price_1": "",

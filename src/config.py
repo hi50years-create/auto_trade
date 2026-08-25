@@ -99,6 +99,14 @@ class Config:
     log_level: str = field(default_factory=lambda: _get_str("LOG_LEVEL", "INFO"))
     log_path: str = field(default_factory=lambda: _get_str("LOG_PATH", "logs/trading_bot.log"))
 
+    # 웹 대시보드 (텔레그램 일회용 코드 로그인)
+    web_enabled: bool = field(default_factory=lambda: _get_str("WEB_ENABLED", "true").lower() == "true")
+    web_host: str = field(default_factory=lambda: _get_str("WEB_HOST", "127.0.0.1"))
+    web_port: int = field(default_factory=lambda: _get_int("WEB_PORT", 8080))
+    # 세션 쿠키 서명용 비밀키. 비워두면 프로세스 시작 시 임의 생성(재시작하면 로그인 풀림).
+    # VM 등에서 재시작해도 세션을 유지하고 싶으면 고정값을 넣어주세요 (openssl rand -hex 32 로 생성 권장).
+    web_secret_key: str = field(default_factory=lambda: _get_str("WEB_SECRET_KEY", ""))
+
     def __post_init__(self):
         if self.trading_mode not in ("paper", "live"):
             raise RuntimeError("[config] TRADING_MODE 은 'paper' 또는 'live' 만 허용됩니다.")

@@ -44,6 +44,21 @@ async def notify(text: str):
         log.exception("텔레그램 전송 실패 chat_id=%s", CONFIG.telegram_chat_id)
 
 
+async def send_to_personal(text: str) -> bool:
+    """로그인 코드처럼 그룹 구성원에게 보이면 안 되는 메시지는 개인 DM(TELEGRAM_USER_CHAT_ID)으로만 보낸다.
+    개인 DM이 설정되어 있지 않으면 전송하지 않고 False 를 반환한다 (그룹으로 새는 것을 방지)."""
+    if not CONFIG.telegram_user_chat_id:
+        log.warning("TELEGRAM_USER_CHAT_ID 미설정 - 개인 DM 전송 불가")
+        return False
+    bot = _get_bot()
+    try:
+        await bot.send_message(chat_id=CONFIG.telegram_user_chat_id, text=text, parse_mode=None)
+        return True
+    except Exception:
+        log.exception("텔레그램 개인 DM 전송 실패")
+        return False
+
+
 def _is_authorized(update: Update) -> bool:
     chat_id = update.effective_chat.id if update.effective_chat else None
     return chat_id in CONFIG.telegram_allowed_chat_ids

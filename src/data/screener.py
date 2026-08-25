@@ -21,6 +21,21 @@ MANUAL_WATCHLIST_PATH = PROJECT_ROOT / "config" / "watchlist_manual.txt"
 # 등락률순위 API 에서 상한가로 간주할 최소 등락률 (%) - 상한가는 통상 +30% 근접
 LIMIT_UP_THRESHOLD_PCT = 29.5
 
+# 거래량/거래대금순위 API는 개별 종목뿐 아니라 ETF/ETN(특히 레버리지/인버스 상품)이
+# 상위권을 대량 차지해 후보 슬롯을 오염시키는 경우가 실측으로 확인됐다 (예: "KODEX 200선물인버스2X").
+# v10 전략은 "전일 상한가/신고가 돌파 개별종목"을 찾는 것이 목적이므로 주요 자산운용사
+# ETF/ETN 브랜드 접두어를 이름 기준으로 걸러낸다. 새 브랜드가 나오면 이 목록에 추가할 것.
+_FUND_PRODUCT_MARKERS = (
+    "KODEX", "TIGER", "KBSTAR", "ARIRANG", "KOSEF", "SOL", "ACE", "HANARO",
+    "PLUS", "TIMEFOLIO", "WOORI", "마이티", "파워", "히어로즈", "FOCUS", "KTOP",
+    "마이다스", "KCGI", "VITA", "대신343", "ETN", "ETF",
+)
+
+
+def _is_fund_product(name: str) -> bool:
+    upper = (name or "").upper()
+    return any(marker in upper for marker in _FUND_PRODUCT_MARKERS)
+
 
 def _load_manual_watchlist() -> list[dict]:
     if not MANUAL_WATCHLIST_PATH.exists():
@@ -45,26 +60,30 @@ def _pick(row: dict, *keys, default=None):
 
 
 def _candidates_from_ranking_apis(broker: BrokerBase) -> list[dict]:
+    """코스피/코스닥을 나눠서 각각 조회한다 - 순위 API가 통합(0000) 조회 시 30건으로
+    캡핑되어 있어, 시장을 분리하면 최대 60건까지 커버리지를 넓힐 수 있다 (실측 확인됨)."""
     codes_seen: dict[str, dict] = {}
-    try:
-        for row in broker.get_fluctuation_rank(top_n=30):
-            pct = float(_pick(row, "prdy_ctrt", default=0) or 0)
-            if pct >= LIMIT_UP_THRESHOLD_PCT:
-                code = _pick(row, "stck_shrn_iscd", "mksc_shrn_iscd")
-                name = _pick(row, "hts_kor_isnm", default=code)
-                if code:
-                    codes_seen[code] = {"code": code, "name": name, "reason": "상한가"}
-    except Exception:
-        log.exception("등락률순위 API 조회 실패")
 
-    try:
-        for row in broker.get_volume_rank(top_n=30):
-            code = _pick(row, "mksc_shrn_iscd", "stck_shrn_iscd")
-            name = _pick(row, "hts_kor_isnm", default=code)
-            if code and code not in codes_seen:
-                codes_seen[code] = {"code": code, "name": name, "reason": "거래대금상위"}
-    except Exception:
-        log.exception("거래량/거래대금순위 API 조회 실패")
+    for market in ("KOSPI", "KOSDAQ"):
+        try:
+            for row in broker.get_fluctuation_rank(top_n=30, market=market):
+                pct = float(_pick(row, "prdy_ctrt", default=0) or 0)
+                if pct >= LIMIT_UP_THRESHOLD_PCT:
+                    code = _pick(row, "stck_shrn_iscd", "mksc_shrn_iscd")
+                    name = _pick(row, "hts_kor_isnm", default=code)
+                    if code and not _is_fund_product(name):
+                        codes_seen[code] = {"code": code, "name": name, "reason": f"상한가({market})"}
+        except Exception:
+            log.exception("등락률순위 API 조회 실패 (market=%s)", market)
+
+        try:
+            for row in broker.get_volume_rank(top_n=30, market=market):
+                code = _pick(row, "mksc_shrn_iscd", "stck_shrn_iscd")
+                name = _pick(row, "hts_kor_isnm", default=code)
+                if code and code not in codes_seen and not _is_fund_product(name):
+                    codes_seen[code] = {"code": code, "name": name, "reason": f"거래대금상위({market})"}
+        except Exception:
+            log.exception("거래량/거래대금순위 API 조회 실패 (market=%s)", market)
 
     return list(codes_seen.values())
 

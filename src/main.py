@@ -1,6 +1,7 @@
 """5분 시초가 돌파 매매 시스템 v10 - 메인 오케스트레이터.
 systemd 서비스(trading_bot.service)로 상시 구동되며, asyncio 이벤트 루프 위에서
-(1) Telegram 봇 폴링 (2) APScheduler 기반 일정 작업 (3) 종목별 실시간 감시 태스크를 함께 돌린다.
+(1) Telegram 봇 폴링 (2) APScheduler 기반 일정 작업 (3) 종목별 실시간 감시 태스크
+(4) 읽기 전용 웹 대시보드를 함께 돌린다.
 """
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import asyncio
 import signal
 from datetime import date, datetime
 
+import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -18,6 +20,7 @@ from src.data import screener
 from src.db import database
 from src.news import naver_news
 from src.notify import telegram_bot
+from src.web.dashboard import create_app as create_web_app
 from src.strategy.risk_manager import SlotManager, check_gap_up, check_market_index
 from src.strategy.state_machine import StockWatcher, WatchContext
 from src.utils.logger import get_logger
@@ -240,6 +243,15 @@ async def run():
         second=CONFIG.market_close_time.second, day_of_week="mon-fri"))
     scheduler.start()
 
+    web_server = None
+    web_task = None
+    if CONFIG.web_enabled:
+        web_app = create_web_app(engine)
+        web_config = uvicorn.Config(web_app, host=CONFIG.web_host, port=CONFIG.web_port, log_level="warning")
+        web_server = uvicorn.Server(web_config)
+        web_task = asyncio.create_task(web_server.serve())
+        log.info("웹 대시보드 기동: http://%s:%d", CONFIG.web_host, CONFIG.web_port)
+
     log.info("트레이딩 봇 시작 (모드=%s)", CONFIG.trading_mode)
     await telegram_bot.notify(f"✅ 트레이딩 봇이 시작되었습니다. (모드: {CONFIG.trading_mode.upper()})")
 
@@ -261,6 +273,10 @@ async def run():
 
         await app.updater.stop()
         await app.stop()
+
+    if web_server is not None:
+        web_server.should_exit = True
+        await web_task
     scheduler.shutdown()
 
 
