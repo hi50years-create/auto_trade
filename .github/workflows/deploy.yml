@@ -1,0 +1,56 @@
+name: Deploy Trading Bot to Oracle VM
+
+on:
+  push:
+    branches: [main]
+
+# 동일 브랜치에 연속 push 시 이전 배포가 새 배포와 경합하지 않도록 직렬화
+concurrency:
+  group: deploy-trading-bot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (구문 검증용)
+        uses: actions/checkout@v4
+
+      - name: Python 구문 사전 검증
+        run: |
+          python3 -m py_compile $(git ls-files '*.py')
+
+      - name: Deploy via SSH to Oracle VM
+        id: deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            cd /home/ubuntu/auto_trade
+            git fetch origin main
+            git reset --hard origin/main
+            source .venv/bin/activate
+            pip3 install -r requirements.txt
+            deactivate
+            sudo systemctl restart trading_bot.service
+            sleep 3
+            sudo systemctl is-active --quiet trading_bot.service
+
+      - name: Notify Telegram (성공)
+        if: success()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="✅ [배포 완료] auto_trade 봇이 최신 커밋(${{ github.sha }})으로 재시작되었습니다."
+
+      - name: Notify Telegram (실패)
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="❌ [배포 실패] auto_trade 봇 배포가 실패했습니다. GitHub Actions 로그를 확인하세요. (commit: ${{ github.sha }})"

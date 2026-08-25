@@ -1,0 +1,23 @@
+[Unit]
+Description=5-min Morning Breakout Auto Trading Bot (v10)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/auto_trade
+Environment=PYTHONUNBUFFERED=1
+# .env 는 config.py 가 WorkingDirectory 기준으로 직접 로드하므로 별도 EnvironmentFile 불필요
+ExecStart=/home/ubuntu/auto_trade/.venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/auto_trade/logs/systemd.log
+StandardError=append:/home/ubuntu/auto_trade/logs/systemd.log
+
+# 계좌/시세 관련 프로세스이므로 과도한 자원 사용을 방지하는 안전장치 (필요 시 조정)
+MemoryMax=512M
+TasksMax=200
+
+[Install]
+WantedBy=multi-user.target

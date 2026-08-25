@@ -1,0 +1,11 @@
+.env
+*.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.db
+data/*.db-journal
+*.log
+.DS_Store
+.kis_token_cache.json
