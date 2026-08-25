@@ -69,7 +69,20 @@ class KISClient(BrokerBase):
         self._realtime = _RealtimeFeed(self)
         self._session = requests.Session()
 
+        # 모의투자(paper) 서버는 실전보다 초당 거래건수 제한이 훨씬 엄격하다 (EGW00201 오류 유발).
+        # KIS 공식 예제(kis_auth.py)도 모의 0.5초 / 실전 0.05초 간격을 둔다 - 여기서는 다소 보수적으로 적용.
+        self._min_req_interval = 0.5 if self.env_dv == "demo" else 0.15
+        self._last_req_at = 0.0
+        self._rate_lock = threading.Lock()
+
         self._ensure_token()
+
+    def _throttle(self):
+        with self._rate_lock:
+            wait = self._min_req_interval - (time_lib.time() - self._last_req_at)
+            if wait > 0:
+                time_lib.sleep(wait)
+            self._last_req_at = time_lib.time()
 
     # ------------------------------------------------------------ 인증
     def _ensure_token(self):
@@ -147,17 +160,25 @@ class KISClient(BrokerBase):
         return h
 
     # ------------------------------------------------------------ REST 공통 헬퍼
-    def _get(self, path: str, tr_id: str, params: dict) -> dict:
+    def _get(self, path: str, tr_id: str, params: dict, _retry: bool = True) -> dict:
+        self._throttle()
         res = self._session.get(f"{self.rest_base}{path}", headers=self._headers(tr_id), params=params, timeout=10)
-        return self._parse(res, path)
+        return self._parse(res, path, lambda: self._get(path, tr_id, params, _retry=False), _retry)
 
-    def _post(self, path: str, tr_id: str, body: dict) -> dict:
+    def _post(self, path: str, tr_id: str, body: dict, _retry: bool = True) -> dict:
+        self._throttle()
         res = self._session.post(f"{self.rest_base}{path}", headers=self._headers(tr_id), data=json.dumps(body), timeout=10)
-        return self._parse(res, path)
+        return self._parse(res, path, lambda: self._post(path, tr_id, body, _retry=False), _retry)
 
-    def _parse(self, res: requests.Response, path: str) -> dict:
+    def _parse(self, res: requests.Response, path: str, retry_fn=None, allow_retry: bool = True) -> dict:
         if res.status_code != 200:
-            log.error("KIS API 오류 [%s] status=%s body=%s", path, res.status_code, res.text[:500])
+            body_preview = res.text[:500]
+            # EGW00201: 초당 거래건수 초과 (모의투자에서 특히 빈번) - 짧게 대기 후 1회 재시도
+            if allow_retry and retry_fn and "EGW00201" in body_preview:
+                log.warning("KIS 초당 거래건수 초과 [%s] - 0.7초 대기 후 재시도", path)
+                time_lib.sleep(0.7)
+                return retry_fn()
+            log.error("KIS API 오류 [%s] status=%s body=%s", path, res.status_code, body_preview)
             return {"rt_cd": "-1", "msg1": f"HTTP {res.status_code}", "output": {}}
         data = res.json()
         if data.get("rt_cd") != "0":
@@ -263,7 +284,7 @@ class KISClient(BrokerBase):
             {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code},
         )
         try:
-            return float(data["output"]["prdy_ctrt"])
+            return float(data["output"]["bstp_nmix_prdy_ctrt"])
         except (KeyError, TypeError, ValueError):
             log.error("지수 변동률 파싱 실패 market=%s data=%s", market, data)
             return 0.0

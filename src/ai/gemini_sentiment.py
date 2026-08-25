@@ -67,11 +67,11 @@ def analyze_sentiment(stock_name: str, news_items: list[dict]) -> dict:
     url = API_URL_TMPL.format(model=CONFIG.gemini_model)
     body = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=15)
+        res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=30)
         if res.status_code == 429:
             log.warning("Gemini 429 Too Many Requests - 쿼터 초과, 5초 대기 후 1회 재시도")
             time_lib.sleep(5)
-            res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=15)
+            res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=30)
         res.raise_for_status()
         data = res.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"]

@@ -35,12 +35,13 @@ def _get_bot() -> Bot:
 
 
 async def notify(text: str):
+    """시스템 알림(체결/청산/스크리닝 결과 등)은 그룹 채팅(TELEGRAM_CHAT_ID)으로만 발송한다.
+    명령 실행 권한은 TELEGRAM_USER_CHAT_ID(개인 DM)에도 별도로 부여된다 (CONFIG.telegram_allowed_chat_ids 참고)."""
     bot = _get_bot()
-    for chat_id in CONFIG.telegram_allowed_chat_ids:
-        try:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode=None)
-        except Exception:
-            log.exception("텔레그램 전송 실패 chat_id=%s", chat_id)
+    try:
+        await bot.send_message(chat_id=CONFIG.telegram_chat_id, text=text, parse_mode=None)
+    except Exception:
+        log.exception("텔레그램 전송 실패 chat_id=%s", CONFIG.telegram_chat_id)
 
 
 def _is_authorized(update: Update) -> bool:

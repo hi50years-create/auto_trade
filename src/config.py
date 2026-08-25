@@ -61,16 +61,22 @@ class Config:
 
     # Gemini
     gemini_api_key: str = field(default_factory=lambda: _get_str("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: _get_str("GEMINI_MODEL", "gemini-1.5-flash"))
+    gemini_model: str = field(default_factory=lambda: _get_str("GEMINI_MODEL", "gemini-3.6-flash"))
     gemini_throttle_seconds: float = field(default_factory=lambda: _get_float("GEMINI_THROTTLE_SECONDS", 4.5))
 
     # Telegram
+    # telegram_chat_id: 알림이 발송되는 그룹(또는 개인) 채팅방. 필수.
+    # telegram_user_chat_id: 개인 DM chat_id. 비워두면 그룹 채팅에서의 명령만 허용된다.
     telegram_bot_token: str = field(default_factory=lambda: _get_str("TELEGRAM_BOT_TOKEN", required=True))
-    telegram_allowed_chat_ids: tuple[int, ...] = field(
-        default_factory=lambda: tuple(
-            int(x) for x in _get_str("TELEGRAM_ALLOWED_CHAT_IDS", "").replace(" ", "").split(",") if x
-        )
-    )
+    telegram_chat_id: str = field(default_factory=lambda: _get_str("TELEGRAM_CHAT_ID", required=True))
+    telegram_user_chat_id: str = field(default_factory=lambda: _get_str("TELEGRAM_USER_CHAT_ID", ""))
+
+    @property
+    def telegram_allowed_chat_ids(self) -> tuple[int, ...]:
+        ids = {int(self.telegram_chat_id)}
+        if self.telegram_user_chat_id:
+            ids.add(int(self.telegram_user_chat_id))
+        return tuple(ids)
 
     # 리스크 관리
     max_slots: int = field(default_factory=lambda: _get_int("MAX_SLOTS", 3))
