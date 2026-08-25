@@ -264,8 +264,13 @@ class KISClient(BrokerBase):
     def _resample_3min(df_1m: pd.DataFrame) -> pd.DataFrame:
         if df_1m.empty:
             return df_1m
-        df_1m["minute"] = df_1m["time"].str[:4].astype(int)  # HHMM
-        df_1m["bucket"] = (df_1m["minute"] // 3) * 3  # 3분 단위로 내림
+        # HHMM을 10진수로 취급해 //3*3 하면 시(hour) 경계(예: 12:59->13:00)에서
+        # 60진법과 10진법이 어긋나 잘못된 분(59 초과) 값이 나오는 버그가 있었다.
+        # 자정 기준 총 분(minute-of-day)으로 환산해 버킷팅해야 항상 유효한 시:분이 나온다.
+        hh = df_1m["time"].str[:2].astype(int)
+        mm = df_1m["time"].str[2:4].astype(int)
+        df_1m = df_1m.copy()
+        df_1m["bucket"] = ((hh * 60 + mm) // 3) * 3  # 자정 기준 총 분, 3분 단위로 내림
         agg = df_1m.groupby("bucket").agg(
             open=("open", "first"),
             high=("high", "max"),
@@ -273,7 +278,7 @@ class KISClient(BrokerBase):
             close=("close", "last"),
             volume=("volume", "sum"),
         ).reset_index()
-        agg["time"] = agg["bucket"].apply(lambda b: f"{b // 100:02d}:{b % 100:02d}")
+        agg["time"] = agg["bucket"].apply(lambda b: f"{b // 60:02d}:{b % 60:02d}")
         return agg[["time", "open", "high", "low", "close", "volume"]]
 
     def get_index_change_pct(self, market: str) -> float:
