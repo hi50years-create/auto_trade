@@ -85,6 +85,15 @@ def _candidates_from_ranking_apis(broker: BrokerBase) -> list[dict]:
         except Exception:
             log.exception("거래량/거래대금순위 API 조회 실패 (market=%s)", market)
 
+        try:
+            for row in broker.get_near_high_rank(top_n=30, market=market):
+                code = _pick(row, "mksc_shrn_iscd", "stck_shrn_iscd")
+                name = _pick(row, "hts_kor_isnm", default=code)
+                if code and code not in codes_seen and not _is_fund_product(name):
+                    codes_seen[code] = {"code": code, "name": name, "reason": f"신고가근접({market})"}
+        except Exception:
+            log.exception("신고가근접순위 API 조회 실패 (market=%s)", market)
+
     return list(codes_seen.values())
 
 

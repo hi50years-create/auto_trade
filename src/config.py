@@ -98,6 +98,7 @@ class Config:
     db_path: str = field(default_factory=lambda: _get_str("DB_PATH", "data/trading_bot.db"))
     log_level: str = field(default_factory=lambda: _get_str("LOG_LEVEL", "INFO"))
     log_path: str = field(default_factory=lambda: _get_str("LOG_PATH", "logs/trading_bot.log"))
+    log_retention_days: int = field(default_factory=lambda: _get_int("LOG_RETENTION_DAYS", 7))
 
     # 웹 대시보드 (텔레그램 일회용 코드 로그인)
     web_enabled: bool = field(default_factory=lambda: _get_str("WEB_ENABLED", "true").lower() == "true")

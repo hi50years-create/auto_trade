@@ -348,6 +348,29 @@ class KISClient(BrokerBase):
         )
         return (data.get("output", []) or [])[:top_n]
 
+    def get_near_high_rank(self, top_n: int = 30, market: str = "ALL") -> list[dict]:
+        """신고가 근접 순위 (52주/기간 신고가 대비 괴리율이 작은 종목). 후보 소스 3번째 축.
+        필드/파라미터는 KIS 문서 재검증 권장."""
+        data = self._get(
+            "/uapi/domestic-stock/v1/ranking/near-new-highlow",
+            TR_NEAR_NEW_HIGHLOW,
+            {
+                "fid_aply_rang_vol": "0",  # 0: 전체 (거래량 제한 없음)
+                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_scr_div_code": "20187",
+                "fid_div_cls_code": "0",  # 0: 전체 (관리종목 등 구분 없음)
+                "fid_input_cnt_1": "0",   # 괴리율 최소
+                "fid_input_cnt_2": "10",  # 괴리율 최대 (신고가 대비 10% 이내)
+                "fid_prc_cls_code": "0",  # 0: 신고근접 (1: 신저근접)
+                "fid_input_iscd": self.MARKET_ISCD[market],
+                "fid_trgt_cls_code": "0",
+                "fid_trgt_exls_cls_code": "0",
+                "fid_aply_rang_prc_1": "0",
+                "fid_aply_rang_prc_2": "9999999",
+            },
+        )
+        return (data.get("output", []) or [])[:top_n]
+
     # ------------------------------------------------------------ 주문
     def buy_limit(self, code: str, qty: int, price: int) -> OrderResult:
         return self._place_order(code, qty, price, is_buy=True)
