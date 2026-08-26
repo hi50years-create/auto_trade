@@ -86,7 +86,7 @@ class Config:
     slippage_pct: float = field(default_factory=lambda: _get_float("SLIPPAGE_PCT", 0.002))
     index_crash_threshold_pct: float = field(default_factory=lambda: _get_float("INDEX_CRASH_THRESHOLD_PCT", -1.2))
     gap_up_max_pct: float = field(default_factory=lambda: _get_float("GAP_UP_MAX_PCT", 5.0))
-    min_prev_trade_amount: float = field(default_factory=lambda: _get_float("MIN_PREV_TRADE_AMOUNT", 40_000_000_000))
+    min_prev_trade_amount: float = field(default_factory=lambda: _get_float("MIN_PREV_TRADE_AMOUNT", 25_000_000_000))
 
     # 시간 필터
     entry_window_start: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_START", "09:00:00")))
