@@ -62,6 +62,11 @@ class BrokerBase(ABC):
         ...
 
     @abstractmethod
+    def get_account_snapshot(self) -> dict:
+        """예수금+보유종목을 단일 API 호출로 함께 반환한다: {"cash_balance": float, "holdings": list[dict]}."""
+        ...
+
+    @abstractmethod
     def subscribe_realtime(self, codes: list[str], on_tick: Optional[Callable[[str, dict], None]]) -> None:
         """실시간 체결/호가 구독 시작 (비동기 백그라운드)."""
         ...

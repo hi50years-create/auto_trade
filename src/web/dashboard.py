@@ -112,24 +112,63 @@ _DASHBOARD_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>auto_trade 대시보드</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f1115;color:#e6e6e6;margin:0;padding:1.5rem}}
-h1{{font-size:1.2rem;display:flex;justify-content:space-between;align-items:center}}
+h1{{font-size:1.2rem;display:flex;justify-content:space-between;align-items:center;margin:0 0 1rem}}
 a{{color:#9ca3af;font-size:.85rem;text-decoration:none}}
-pre{{background:#1a1d24;padding:1.2rem;border-radius:12px;white-space:pre-wrap;line-height:1.6;font-size:.95rem}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:1rem}}
+@media (max-width:800px){{.grid{{grid-template-columns:1fr}}}}
+.card{{background:#1a1d24;padding:1.2rem;border-radius:12px}}
+.card h2{{font-size:.9rem;color:#9ca3af;margin:0 0 .8rem;font-weight:600}}
+pre{{white-space:pre-wrap;line-height:1.6;font-size:.95rem;margin:0}}
 .badge{{display:inline-block;padding:.2rem .6rem;border-radius:999px;font-size:.75rem;background:#1f2937;color:#9ca3af;margin-left:.5rem}}
+.cash{{font-size:1.4rem;font-weight:700;margin-bottom:1rem}}
+table{{width:100%;border-collapse:collapse;font-size:.85rem}}
+th,td{{text-align:right;padding:.4rem .3rem;border-bottom:1px solid #2a2e37}}
+th:first-child,td:first-child{{text-align:left}}
+th{{color:#9ca3af;font-weight:600}}
+.pos{{color:#4ade80}} .neg{{color:#f87171}}
+.empty{{color:#6b7280;font-size:.85rem}}
 </style></head><body>
 <h1>📊 auto_trade 대시보드 <span><span class="badge" id="mode">{mode}</span> <a href="/logout">로그아웃</a></span></h1>
-<pre id="status">불러오는 중...</pre>
+<div class="grid">
+  <div class="card">
+    <h2>시스템 상태</h2>
+    <pre id="status">불러오는 중...</pre>
+  </div>
+  <div class="card">
+    <h2>계좌 정보 (KIS 잔고조회 실데이터)</h2>
+    <div class="cash">예수금: <span id="cash">-</span></div>
+    <table>
+      <thead><tr><th>종목</th><th>수량</th><th>평단가</th><th>현재가</th><th>평가손익</th></tr></thead>
+      <tbody id="holdings-body"><tr><td colspan="5" class="empty">불러오는 중...</td></tr></tbody>
+    </table>
+  </div>
+</div>
 <script>
+function fmt(n) {{ return Math.round(n).toLocaleString('ko-KR'); }}
+
 async function refresh() {{
   try {{
     const res = await fetch('/api/status');
     if (res.status === 401) {{ location.href = '/'; return; }}
     const data = await res.json();
     document.getElementById('status').innerText = data.status_text;
+    document.getElementById('cash').innerText = fmt(data.cash_balance) + '원';
+
+    const body = document.getElementById('holdings-body');
+    if (!data.holdings || data.holdings.length === 0) {{
+      body.innerHTML = '<tr><td colspan="5" class="empty">보유 종목이 없습니다.</td></tr>';
+    }} else {{
+      body.innerHTML = data.holdings.map(h => {{
+        const cls = h.eval_profit_pct >= 0 ? 'pos' : 'neg';
+        const sign = h.eval_profit_pct >= 0 ? '+' : '';
+        return `<tr><td>${{h.name}}</td><td>${{h.qty}}</td><td>${{fmt(h.avg_price)}}</td>` +
+               `<td>${{fmt(h.current_price)}}</td><td class="${{cls}}">${{sign}}${{h.eval_profit_pct.toFixed(2)}}%</td></tr>`;
+      }}).join('');
+    }}
   }} catch (e) {{ /* 네트워크 일시 오류 무시, 다음 주기에 재시도 */ }}
 }}
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 20000);
 </script>
 </body></html>"""
 
@@ -202,7 +241,13 @@ def create_app(engine) -> FastAPI:
         if not _is_authed(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         text = await engine.get_status_text()
-        return JSONResponse({"status_text": text, "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        account = await engine.get_account_info()
+        return JSONResponse({
+            "status_text": text,
+            "cash_balance": account["cash_balance"],
+            "holdings": account["holdings"],
+            "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
     @app.get("/logout")
     async def logout():

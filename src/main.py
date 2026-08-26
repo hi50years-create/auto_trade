@@ -179,6 +179,12 @@ class TradingEngine:
             lines.append(line)
         return "\n".join(lines)
 
+    async def get_account_info(self) -> dict:
+        """웹 대시보드용 계좌 정보(예수금/보유종목). KIS 잔고조회 API를 그대로 사용하므로
+        오늘 이 시스템이 진입한 포지션뿐 아니라 계좌에 있는 모든 보유종목이 표시된다.
+        잔고조회 1회로 예수금+보유종목을 함께 가져온다 (이전엔 API를 두 번 호출했음)."""
+        return await asyncio.to_thread(self.broker.get_account_snapshot)
+
     async def get_news_text(self, stock_name: str) -> str:
         news_items = await asyncio.to_thread(naver_news.search_news, stock_name)
         sentiment = await asyncio.to_thread(gemini_sentiment.analyze_sentiment, stock_name, news_items)
@@ -231,7 +237,12 @@ async def run():
     engine = TradingEngine()
     app = telegram_bot.build_application(engine)
 
-    scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+    # misfire_grace_time: 기본값(1초)이면 프로세스가 그 순간 잠깐 바쁘거나(레이트리밋 재시도 등)
+    # 절전에서 막 깨어난 직후처럼 스케줄러 루프가 정시에 못 돌면 "지나간 작업"으로 간주해
+    # 그냥 스킵해버린다 (2026-08-26 08:50/09:00 작업이 실제로 이렇게 누락됨을 확인).
+    # 지연되더라도 최대한 늦게라도 실행되도록 넉넉히 잡는다.
+    JOB_DEFAULTS = {"misfire_grace_time": 600, "coalesce": True}
+    scheduler = AsyncIOScheduler(timezone="Asia/Seoul", job_defaults=JOB_DEFAULTS)
     scheduler.add_job(engine.pre_screen_job, CronTrigger(
         hour=CONFIG.pre_screen_time.hour, minute=CONFIG.pre_screen_time.minute,
         second=CONFIG.pre_screen_time.second, day_of_week="mon-fri"))

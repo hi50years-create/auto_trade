@@ -416,34 +416,39 @@ class KISClient(BrokerBase):
         return -1
 
     # ------------------------------------------------------------ 잔고/보유
-    def get_cash_balance(self) -> float:
+    def get_account_snapshot(self) -> dict:
+        """예수금+보유종목을 잔고조회 1회 호출로 함께 가져온다.
+        get_cash_balance()/get_holdings() 를 따로 부르면 동일 API를 두 번 호출하게 되어
+        (대시보드 자동새로고침 등에서) 불필요하게 KIS 초당 거래건수 제한을 앞당겨 소모한다."""
         out1, out2 = self._inquire_balance()
-        if out2 is None or out2.empty:
-            return 0.0
-        try:
-            return float(out2.iloc[0]["dnca_tot_amt"])  # 예수금총금액
-        except (KeyError, IndexError, ValueError):
-            log.error("예수금 파싱 실패 out2=%s", out2)
-            return 0.0
+        cash = 0.0
+        if out2 is not None and not out2.empty:
+            try:
+                cash = float(out2.iloc[0]["dnca_tot_amt"])  # 예수금총금액
+            except (KeyError, IndexError, ValueError):
+                log.error("예수금 파싱 실패 out2=%s", out2)
+
+        holdings = []
+        if out1 is not None and not out1.empty:
+            for _, row in out1.iterrows():
+                qty = int(float(row.get("hldg_qty", 0) or 0))
+                if qty <= 0:
+                    continue
+                holdings.append({
+                    "code": row.get("pdno"),
+                    "name": row.get("prdt_name"),
+                    "qty": qty,
+                    "avg_price": float(row.get("pchs_avg_pric", 0) or 0),
+                    "current_price": float(row.get("prpr", 0) or 0),
+                    "eval_profit_pct": float(row.get("evlu_pfls_rt", 0) or 0),
+                })
+        return {"cash_balance": cash, "holdings": holdings}
+
+    def get_cash_balance(self) -> float:
+        return self.get_account_snapshot()["cash_balance"]
 
     def get_holdings(self) -> list[dict]:
-        out1, _ = self._inquire_balance()
-        if out1 is None or out1.empty:
-            return []
-        holdings = []
-        for _, row in out1.iterrows():
-            qty = int(float(row.get("hldg_qty", 0) or 0))
-            if qty <= 0:
-                continue
-            holdings.append({
-                "code": row.get("pdno"),
-                "name": row.get("prdt_name"),
-                "qty": qty,
-                "avg_price": float(row.get("pchs_avg_pric", 0) or 0),
-                "current_price": float(row.get("prpr", 0) or 0),
-                "eval_profit_pct": float(row.get("evlu_pfls_rt", 0) or 0),
-            })
-        return holdings
+        return self.get_account_snapshot()["holdings"]
 
     def _inquire_balance(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         tr_id = TR_BALANCE[self.env_dv]
