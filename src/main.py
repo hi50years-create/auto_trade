@@ -268,6 +268,7 @@ async def run():
 
     async with app:
         await app.start()
+        await telegram_bot.set_command_menu()
         await app.updater.start_polling()
 
         stop_event = asyncio.Event()

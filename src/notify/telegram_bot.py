@@ -5,8 +5,18 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from telegram import Bot, Update
+from telegram import Bot, BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+# 텔레그램 "/" 메뉴에 표시될 명령어 목록. 여기 추가/수정하면 set_command_menu() 가 반영한다.
+COMMAND_MENU = [
+    BotCommand("status", "시스템 상태, 활성 슬롯, 보유종목 평가손익"),
+    BotCommand("news", "종목명 뉴스+AI 감성 요약 (/news 삼성전자)"),
+    BotCommand("supply_demand", "종목명 실시간 체결강도/호가잔량비 (/sd 삼성전자)"),
+    BotCommand("re_screen", "장전 스크리닝 파이프라인 수동 재기동"),
+    BotCommand("force_sell", "종목명 즉시 시장가 청산 (/force_sell 삼성전자)"),
+    BotCommand("stop_all", "긴급 전체 중지 + 보유잔고 전량 시장가 청산"),
+]
 
 from src.config import CONFIG
 from src.utils.logger import get_logger
@@ -32,6 +42,13 @@ def _get_bot() -> Bot:
     if _bot is None:
         _bot = Bot(token=CONFIG.telegram_bot_token)
     return _bot
+
+
+async def set_command_menu():
+    """텔레그램 클라이언트의 '/' 자동완성 메뉴에 COMMAND_MENU 를 등록한다.
+    등록해두지 않으면 명령어를 알아도 자동완성/목록이 뜨지 않는다."""
+    bot = _get_bot()
+    await bot.set_my_commands(COMMAND_MENU)
 
 
 async def notify(text: str):
