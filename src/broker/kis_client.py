@@ -355,12 +355,12 @@ class KISClient(BrokerBase):
             "/uapi/domestic-stock/v1/ranking/near-new-highlow",
             TR_NEAR_NEW_HIGHLOW,
             {
-                "fid_aply_rang_vol": "0",  # 0: 전체 (거래량 제한 없음)
+                "fid_aply_rang_vol": "100",  # 100: 100주 이상 거래된 종목만 (완전 휴면 종목 일부 배제)
                 "fid_cond_mrkt_div_code": "J",
                 "fid_cond_scr_div_code": "20187",
                 "fid_div_cls_code": "0",  # 0: 전체 (관리종목 등 구분 없음)
                 "fid_input_cnt_1": "0",   # 괴리율 최소
-                "fid_input_cnt_2": "10",  # 괴리율 최대 (신고가 대비 10% 이내)
+                "fid_input_cnt_2": "5",   # 괴리율 최대 (신고가 대비 5% 이내로 서버측 선필터링)
                 "fid_prc_cls_code": "0",  # 0: 신고근접 (1: 신저근접)
                 "fid_input_iscd": self.MARKET_ISCD[market],
                 "fid_trgt_cls_code": "0",

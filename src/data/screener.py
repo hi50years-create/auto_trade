@@ -59,9 +59,36 @@ def _pick(row: dict, *keys, default=None):
     return default
 
 
+# 신고가근접순위 API는 거래량 필터가 느슨해(fid_aply_rang_vol="100"조차 100주면 통과), 사실상
+# 거래가 거의 없어 "옛 고점에 그냥 머물러 있는" 휴면 종목까지 다수 포함시킨다 (실측 확인됨:
+# 57개 후보 중 다수가 당일 거래대금 0원). acml_vol*stck_prpr 대략치로 최소 유동성만 걸러내
+# (정밀 판정은 어차피 뒤 단계 build_daily_info 에서 함) 명백히 죽은 종목을 조기에 배제한다.
+_MIN_ROUGH_TRADE_VALUE = 5_000_000_000  # 50억원 - 400억 기준보다 훨씬 낮게 잡아 과다배제 방지
+
+
+def _has_meaningful_volume(row: dict) -> bool:
+    try:
+        vol = float(_pick(row, "acml_vol", default=0) or 0)
+        price = float(_pick(row, "stck_prpr", default=0) or 0)
+        return vol * price >= _MIN_ROUGH_TRADE_VALUE
+    except (TypeError, ValueError):
+        return True  # 파싱 실패 시엔 배제하지 않고 뒤 단계 정밀 판정에 맡긴다
+
+
+# 신고가근접 API의 "고점 대비 괴리율"이 이 값 이내여야 "진짜 신고가 돌파"로 간주한다.
+# API 자체도 fid_input_cnt_2 로 서버측에서 1차로 좁혀서 받아온다 (kis_client.get_near_high_rank 참고).
+NEAR_HIGH_TOLERANCE_PCT = 3.0
+
+
 def _candidates_from_ranking_apis(broker: BrokerBase) -> list[dict]:
-    """코스피/코스닥을 나눠서 각각 조회한다 - 순위 API가 통합(0000) 조회 시 30건으로
-    캡핑되어 있어, 시장을 분리하면 최대 60건까지 커버리지를 넓힐 수 있다 (실측 확인됨)."""
+    """후보 발굴은 '패턴 신호가 있는' 두 소스(등락률순위=상한가, 신고가근접=신고가 돌파)만 쓴다.
+
+    거래대금상위(volume_rank)는 예전엔 세 번째 발굴 소스로 썼지만, 이건 순수 유동성 랭킹이라
+    패턴 신호가 전혀 없다 - 그래서 여기서 들어온 후보는 대부분 뒤 단계(build_daily_info)에서
+    "돌파패턴 아님"으로 버려지며 일봉 조회만 낭비했다 (실측: 120개 후보 중 대다수).
+    상한가/신고가 조건 자체를 처음부터 만족하는 종목만 후보로 삼으면, 뒤 단계에서 호출할
+    일봉 조회 건수가 극적으로 줄어든다. volume_rank 는 필요시 다른 용도로 broker에 남겨둔다.
+    """
     codes_seen: dict[str, dict] = {}
 
     for market in ("KOSPI", "KOSDAQ"):
@@ -77,16 +104,12 @@ def _candidates_from_ranking_apis(broker: BrokerBase) -> list[dict]:
             log.exception("등락률순위 API 조회 실패 (market=%s)", market)
 
         try:
-            for row in broker.get_volume_rank(top_n=30, market=market):
-                code = _pick(row, "mksc_shrn_iscd", "stck_shrn_iscd")
-                name = _pick(row, "hts_kor_isnm", default=code)
-                if code and code not in codes_seen and not _is_fund_product(name):
-                    codes_seen[code] = {"code": code, "name": name, "reason": f"거래대금상위({market})"}
-        except Exception:
-            log.exception("거래량/거래대금순위 API 조회 실패 (market=%s)", market)
-
-        try:
             for row in broker.get_near_high_rank(top_n=30, market=market):
+                near_rate = abs(float(_pick(row, "hprc_near_rate", default=100) or 100))
+                if near_rate > NEAR_HIGH_TOLERANCE_PCT:
+                    continue
+                if not _has_meaningful_volume(row):
+                    continue  # 거래량 0에 가까운 휴면종목이 "옛 고점에 그냥 머물러 있는" 경우 배제
                 code = _pick(row, "mksc_shrn_iscd", "stck_shrn_iscd")
                 name = _pick(row, "hts_kor_isnm", default=code)
                 if code and code not in codes_seen and not _is_fund_product(name):
