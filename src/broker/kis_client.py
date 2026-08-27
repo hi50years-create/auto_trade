@@ -70,8 +70,10 @@ class KISClient(BrokerBase):
         self._session = requests.Session()
 
         # 모의투자(paper) 서버는 실전보다 초당 거래건수 제한이 훨씬 엄격하다 (EGW00201 오류 유발).
-        # KIS 공식 예제(kis_auth.py)도 모의 0.5초 / 실전 0.05초 간격을 둔다 - 여기서는 다소 보수적으로 적용.
-        self._min_req_interval = 0.5 if self.env_dv == "demo" else 0.15
+        # KIS 공식 예제(kis_auth.py)는 모의 0.5초 간격을 두지만, 실측(2026-08-27 08:50)에서도
+        # 여전히 걸린 것으로 보아 0.5초(초당 2건)로는 부족하다고 판단, 1.0초(초당 1건)로 낮춘다.
+        # 08:50~09:00 10분 여유가 있어 속도보다 안정성을 우선한다.
+        self._min_req_interval = 1.0 if self.env_dv == "demo" else 0.15
         self._last_req_at = 0.0
         self._rate_lock = threading.Lock()
 
@@ -160,24 +162,32 @@ class KISClient(BrokerBase):
         return h
 
     # ------------------------------------------------------------ REST 공통 헬퍼
-    def _get(self, path: str, tr_id: str, params: dict, _retry: bool = True) -> dict:
+    # 08:50 정각처럼 사용자가 몰리는 순간엔 1회 재시도로 부족해 연쇄 실패하는 것이 실측 확인됨
+    # (2026-08-27: 순위 API 2개가 동시에 재시도까지 실패해 후보를 아예 못 가져옴).
+    # 일시적 오류로 간주할 코드들에 대해 백오프를 늘려가며 여러 번 재시도한다.
+    _TRANSIENT_ERROR_CODES = ("EGW00201", "EGW00215", "90020000")
+    _RETRY_BACKOFFS = (0.7, 1.5, 3.0, 5.0)
+
+    def _get(self, path: str, tr_id: str, params: dict, _attempt: int = 0) -> dict:
         self._throttle()
         res = self._session.get(f"{self.rest_base}{path}", headers=self._headers(tr_id), params=params, timeout=10)
-        return self._parse(res, path, lambda: self._get(path, tr_id, params, _retry=False), _retry)
+        return self._parse(res, path, lambda: self._get(path, tr_id, params, _attempt + 1), _attempt)
 
-    def _post(self, path: str, tr_id: str, body: dict, _retry: bool = True) -> dict:
+    def _post(self, path: str, tr_id: str, body: dict, _attempt: int = 0) -> dict:
         self._throttle()
         res = self._session.post(f"{self.rest_base}{path}", headers=self._headers(tr_id), data=json.dumps(body), timeout=10)
-        return self._parse(res, path, lambda: self._post(path, tr_id, body, _retry=False), _retry)
+        return self._parse(res, path, lambda: self._post(path, tr_id, body, _attempt + 1), _attempt)
 
-    def _parse(self, res: requests.Response, path: str, retry_fn=None, allow_retry: bool = True) -> dict:
+    def _parse(self, res: requests.Response, path: str, retry_fn, attempt: int) -> dict:
+        body_preview = res.text[:500] if res.status_code != 200 else ""
+        is_transient = res.status_code != 200 and any(c in body_preview for c in self._TRANSIENT_ERROR_CODES)
+        if is_transient and attempt < len(self._RETRY_BACKOFFS):
+            wait = self._RETRY_BACKOFFS[attempt]
+            log.warning("KIS 일시적 오류 [%s] (%d/%d회차) - %.1f초 대기 후 재시도", path, attempt + 1, len(self._RETRY_BACKOFFS), wait)
+            time_lib.sleep(wait)
+            return retry_fn()
+
         if res.status_code != 200:
-            body_preview = res.text[:500]
-            # EGW00201: 초당 거래건수 초과 (모의투자에서 특히 빈번) - 짧게 대기 후 1회 재시도
-            if allow_retry and retry_fn and "EGW00201" in body_preview:
-                log.warning("KIS 초당 거래건수 초과 [%s] - 0.7초 대기 후 재시도", path)
-                time_lib.sleep(0.7)
-                return retry_fn()
             log.error("KIS API 오류 [%s] status=%s body=%s", path, res.status_code, body_preview)
             return {"rt_cd": "-1", "msg1": f"HTTP {res.status_code}", "output": {}}
         data = res.json()

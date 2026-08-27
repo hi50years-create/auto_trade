@@ -93,6 +93,8 @@ class Config:
     entry_window_end: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_END", "09:30:00")))
     market_close_time: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("MARKET_CLOSE_TIME", "15:30:00")))
     pre_screen_time: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("PRE_SCREEN_TIME", "08:50:00")))
+    # 장마감 직후 스냅샷 계산 시각. 15:30 종가 확정에 약간의 지연 버퍼(5분)를 둔다.
+    eod_snapshot_time: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("EOD_SNAPSHOT_TIME", "15:35:00")))
 
     # DB / 로그
     db_path: str = field(default_factory=lambda: _get_str("DB_PATH", "data/trading_bot.db"))

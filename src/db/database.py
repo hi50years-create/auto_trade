@@ -109,6 +109,40 @@ def get_daily_state(trade_date: str) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM daily_state WHERE trade_date=?", (trade_date,)).fetchone()
 
 
+# ---------------------------------------------------------------- breakout_snapshot
+def replace_breakout_snapshot(snapshot_date: str, rows: list[dict]):
+    """해당 날짜의 스냅샷을 통째로 교체한다 (같은 날 재계산 시 중복/잔여 방지)."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM breakout_snapshot WHERE snapshot_date=?", (snapshot_date,))
+        conn.executemany(
+            """INSERT INTO breakout_snapshot
+               (snapshot_date, stock_code, stock_name, reason, close_price, high_price,
+                trade_amount, is_breakout_or_limit_up)
+               VALUES (:snapshot_date, :stock_code, :stock_name, :reason, :close_price, :high_price,
+                       :trade_amount, :is_breakout_or_limit_up)""",
+            rows,
+        )
+
+
+def get_breakout_snapshot(snapshot_date: str) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM breakout_snapshot WHERE snapshot_date=?", (snapshot_date,)
+        ).fetchall()
+
+
+def get_latest_breakout_snapshot() -> list[sqlite3.Row]:
+    """가장 최근에 저장된 스냅샷 날짜의 전체 행을 반환한다. 주말/공휴일 등으로 정확히
+    '어제'가 아닐 수 있으므로 날짜를 직접 계산하지 않고 '가장 최근 것'을 그대로 쓴다."""
+    with _connect() as conn:
+        latest = conn.execute("SELECT MAX(snapshot_date) AS d FROM breakout_snapshot").fetchone()
+        if not latest or not latest["d"]:
+            return []
+        return conn.execute(
+            "SELECT * FROM breakout_snapshot WHERE snapshot_date=?", (latest["d"],)
+        ).fetchall()
+
+
 # ---------------------------------------------------------------- system_log
 def log_event(level: str, message: str):
     with _connect() as conn:

@@ -136,6 +136,55 @@ def get_prescreening_candidates(broker: BrokerBase) -> list[dict]:
     return []
 
 
+def compute_eod_breakout_snapshot(broker: BrokerBase) -> list[dict]:
+    """장마감(15:30) 직후에 호출한다. 이 시점엔 순위 API의 '현재가'가 곧 '오늘 최종 확정 종가'와
+    같으므로, 09:00 이전이라는 시간 압박 없이 여유있게 오늘의 상한가/신고가 돌파 종목을 정확히
+    계산해 반환한다. 다음 거래일 08:50에는 이 결과를 DB에서 읽기만 하면 되므로 순위 API를
+    다시 호출할 필요가 없고, '09:00을 넘겨서 실시간 데이터로 오염되는' 문제 자체가 사라진다.
+    """
+    candidates = _candidates_from_ranking_apis(broker)
+    snapshot_rows = []
+    for cand in candidates:
+        code, name = cand["code"], cand["name"]
+        try:
+            info = build_daily_info(broker, code)
+        except Exception:
+            log.exception("[%s] 장마감 스냅샷 계산 중 일봉 조회 실패", name)
+            continue
+        if not info["is_breakout_or_limit_up"]:
+            continue
+        snapshot_rows.append({
+            "stock_code": code,
+            "stock_name": name,
+            "reason": cand.get("reason", ""),
+            "close_price": info["prev_close"],
+            "high_price": info["prev_high"],
+            "trade_amount": info["prev_trade_amount"],
+            "is_breakout_or_limit_up": 1,
+        })
+    log.info("장마감 스냅샷 계산 완료: 후보 %d개 중 %d개 돌파패턴 확정", len(candidates), len(snapshot_rows))
+    return snapshot_rows
+
+
+def candidates_from_snapshot(snapshot_rows) -> list[dict]:
+    """DB에 저장된 전일 스냅샷을 pre_screen_job 이 쓰는 후보 딕셔너리 형태로 변환한다.
+    daily_info 가 이미 계산되어 있으므로 build_daily_info 재호출(=일봉 API 재조회)이 불필요하다."""
+    out = []
+    for row in snapshot_rows:
+        out.append({
+            "code": row["stock_code"],
+            "name": row["stock_name"],
+            "reason": row["reason"],
+            "daily_info": {
+                "prev_close": row["close_price"],
+                "prev_high": row["high_price"],
+                "prev_trade_amount": row["trade_amount"],
+                "is_breakout_or_limit_up": bool(row["is_breakout_or_limit_up"]),
+            },
+        })
+    return out
+
+
 def screen_stock_batch(daily_data: dict) -> tuple[bool, list[str]]:
     """3.1절 조건: 전일 거래대금 500억 이상 + 돌파/상한가 패턴."""
     reasons = []
