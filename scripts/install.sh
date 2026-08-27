@@ -17,7 +17,7 @@ timedatectl | grep "Time zone"
 
 echo "2) 시스템 패키지 갱신 및 Python 3.10+ 설치 확인"
 sudo apt-get update -y
-sudo apt-get install -y python3 python3-venv python3-pip git
+sudo apt-get install -y python3 python3-venv python3-pip git sqlite3
 
 echo "3) 가상환경 생성 및 의존성 설치"
 cd "$PROJECT_DIR"

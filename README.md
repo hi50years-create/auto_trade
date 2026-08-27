@@ -157,7 +157,22 @@ bash scripts/run_local.sh
 
 ```bash
 sudo journalctl -u trading_bot.service -f     # systemd 표준출력
-tail -f /home/ubuntu/auto_trade/logs/trading_bot.log   # 애플리케이션 로그
+tail -f ~/auto_trade/logs/trading_bot.log     # 애플리케이션 로그 (매일 자정 회전, 기본 7일 보관)
+```
+
+## 5.5. DB 조회
+
+CLI로 빠르게 보려면:
+```bash
+sqlite3 ~/auto_trade/data/trading_bot.db "SELECT * FROM trades ORDER BY id DESC LIMIT 10;"
+```
+
+GUI로 보고 싶으면 `sqlite-web`을 VM에 별도 venv로 설치해 systemd 서비스(`sqlite-web.service`)로
+띄워두었습니다. 보안을 위해 `127.0.0.1:8081`에서만 열려 있고(외부 방화벽 미개방), 읽기 전용
+(`-r`)입니다. 로컬 Mac에서 SSH 터널로 접속하세요:
+```bash
+ssh -L 8081:localhost:8081 <사용자명>@<VM IP>
+# 연결된 채로 브라우저에서 http://localhost:8081 접속
 ```
 
 ## 알려진 제한사항 (TODO)
