@@ -53,7 +53,8 @@ async def set_command_menu():
 
 async def notify(text: str):
     """시스템 알림(체결/청산/스크리닝 결과 등)은 그룹 채팅(TELEGRAM_CHAT_ID)으로만 발송한다.
-    명령 실행 권한은 TELEGRAM_USER_CHAT_ID(개인 DM)에도 별도로 부여된다 (CONFIG.telegram_allowed_chat_ids 참고)."""
+    그룹은 알림 수신 전용이며 명령어 실행 권한은 없다 - 명령어는 개인 DM(TELEGRAM_USER_CHAT_ID,
+    TELEGRAM_EXTRA_COMMAND_CHAT_IDS)으로 등록된 사람만 가능하다 (CONFIG.telegram_allowed_chat_ids 참고)."""
     bot = _get_bot()
     try:
         await bot.send_message(chat_id=CONFIG.telegram_chat_id, text=text, parse_mode=None)

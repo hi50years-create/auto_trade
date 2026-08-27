@@ -123,8 +123,12 @@ sudo chmod 440 /etc/sudoers.d/trading-bot-deploy
 | `/force_sell [종목명]` | 특정 종목 즉시 시장가 청산 |
 | `/stop_all` | 긴급 전체 중지 + 보유잔고 전량 시장가 청산 |
 
-`TELEGRAM_CHAT_ID`(그룹) 또는 `TELEGRAM_USER_CHAT_ID`(개인 DM)로 등록되지 않은 사용자의 명령은
-모두 거부됩니다.
+**명령어는 개인 DM에서만 동작합니다.** `TELEGRAM_CHAT_ID`(그룹)는 알림 수신 전용이며, 그룹에서
+보낸 명령은 그룹에 초대된 사람이 본인이든 아니든 전부 거부됩니다. 명령어를 실행하려면
+`TELEGRAM_USER_CHAT_ID`(본인 개인 DM)로 등록되어 있어야 하고, 신뢰하는 다른 사람에게도 명령
+권한을 주고 싶으면 `TELEGRAM_EXTRA_COMMAND_CHAT_IDS`에 그 사람의 개인 DM chat_id를 콤마로
+구분해 추가하면 됩니다 (예: `TELEGRAM_EXTRA_COMMAND_CHAT_IDS=111111,222222`) - `.env` 수정 후
+서비스 재시작만 하면 되고, 코드 변경은 필요 없습니다.
 
 ## 4.5. 웹 대시보드 (조회 전용)
 

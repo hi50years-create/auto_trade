@@ -65,17 +65,29 @@ class Config:
     gemini_throttle_seconds: float = field(default_factory=lambda: _get_float("GEMINI_THROTTLE_SECONDS", 4.5))
 
     # Telegram
-    # telegram_chat_id: 알림이 발송되는 그룹(또는 개인) 채팅방. 필수.
-    # telegram_user_chat_id: 개인 DM chat_id. 비워두면 그룹 채팅에서의 명령만 허용된다.
+    # telegram_chat_id: 알림이 발송되는 그룹(또는 개인) 채팅방. 필수. 알림 수신 전용이며 명령어
+    #   인증에는 쓰이지 않는다 - 그룹에 다른 사람을 초대해도 그 사람이 /stop_all 등을 실행할 수 없다.
+    # telegram_user_chat_id: 본인 개인 DM chat_id. 대시보드 로그인 코드(OTP) 수신 + 명령어 인증에 쓰인다.
     telegram_bot_token: str = field(default_factory=lambda: _get_str("TELEGRAM_BOT_TOKEN", required=True))
     telegram_chat_id: str = field(default_factory=lambda: _get_str("TELEGRAM_CHAT_ID", required=True))
     telegram_user_chat_id: str = field(default_factory=lambda: _get_str("TELEGRAM_USER_CHAT_ID", ""))
+    # 명령어 실행만 추가로 허용할 사람들의 개인 DM chat_id (콤마로 구분, 예: "111111,222222").
+    # 대시보드 로그인 코드는 이 목록에는 전송되지 않는다 (telegram_user_chat_id 본인에게만 전송).
+    telegram_extra_command_chat_ids: str = field(
+        default_factory=lambda: _get_str("TELEGRAM_EXTRA_COMMAND_CHAT_IDS", "")
+    )
 
     @property
     def telegram_allowed_chat_ids(self) -> tuple[int, ...]:
-        ids = {int(self.telegram_chat_id)}
+        """명령어(원격 제어) 인증에 허용된 chat_id 목록. 그룹(telegram_chat_id)은 알림 전용이라
+        여기 포함하지 않는다 - 그룹 구성원이 명령어를 실행하려면 반드시 개인 DM으로 별도 등록해야 한다."""
+        ids = set()
         if self.telegram_user_chat_id:
             ids.add(int(self.telegram_user_chat_id))
+        for raw in self.telegram_extra_command_chat_ids.split(","):
+            raw = raw.strip()
+            if raw:
+                ids.add(int(raw))
         return tuple(ids)
 
     # 리스크 관리
@@ -123,6 +135,13 @@ class Config:
             raise RuntimeError(
                 "[config] MAX_SLOTS * SLOT_ALLOCATION_PCT 가 100% 를 초과합니다. "
                 f"(slots={self.max_slots}, pct={self.slot_allocation_pct})"
+            )
+        if not self.telegram_user_chat_id and not self.telegram_extra_command_chat_ids:
+            import warnings
+            warnings.warn(
+                "[config] TELEGRAM_USER_CHAT_ID 가 비어있습니다. 그룹 채팅은 명령어 인증에 쓰이지 "
+                "않으므로, 지금 상태로는 텔레그램 명령어(/status 등)를 아무도 실행할 수 없습니다.",
+                stacklevel=2,
             )
 
     @property
