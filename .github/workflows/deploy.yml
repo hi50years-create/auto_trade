@@ -1,4 +1,4 @@
-name: Deploy Trading Bot to Oracle VM
+name: Deploy Trading Bot to VM
 
 on:
   push:
@@ -20,18 +20,21 @@ jobs:
         run: |
           python3 -m py_compile $(git ls-files '*.py')
 
-      - name: Deploy via SSH to Oracle VM
+      - name: Deploy via SSH to VM
         id: deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          SSH_PROJECT_DIR: ${{ secrets.SSH_PROJECT_DIR }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script_stop: true
+          envs: SSH_PROJECT_DIR
           script: |
             set -e
-            cd /home/ubuntu/auto_trade
+            cd "${SSH_PROJECT_DIR:?SSH_PROJECT_DIR secret 이 설정되지 않았습니다 (예: /home/사용자명/auto_trade)}"
             git fetch origin main
             git reset --hard origin/main
             source .venv/bin/activate

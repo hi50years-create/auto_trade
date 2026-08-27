@@ -67,23 +67,29 @@ cp config/watchlist_manual.txt.example config/watchlist_manual.txt  # 선택: �
 python3 -m py_compile $(find src -name '*.py')
 ```
 
-## 2. Oracle Cloud Free Tier VM 배포 (최초 1회, 수동)
+## 2. 클라우드 무료 VM 배포 (최초 1회, 수동)
+
+Oracle Cloud Free Tier든 GCP Always-Free든 동일한 절차입니다. `install.sh` 가 실행 사용자명과
+설치 경로를 자동 감지하므로 오라클의 관례적인 "ubuntu" 계정이 아니어도(GCP는 계정마다
+리눅스 사용자명이 다름) 그대로 동작합니다.
 
 ```bash
-# VM 에 SSH 접속 후
-git clone <이 저장소 URL> /home/ubuntu/auto_trade
-cd /home/ubuntu/auto_trade
+# VM 에 SSH 접속 후 (예: gcloud compute ssh <인스턴스명> --zone <존>)
+git clone <이 저장소 URL> ~/auto_trade
+cd ~/auto_trade
 cp config/.env.example .env && nano .env   # 실전/모의 API 키 입력
 bash scripts/install.sh
 ```
 
 `install.sh` 가 타임존을 `Asia/Seoul` 로 설정하고, venv/의존성 설치, systemd 서비스 등록까지
 자동으로 수행합니다. (진입 제한 시간 09:00~09:30 판정이 서버 로컬시각 기준이므로 타임존
-설정은 필수입니다.)
+설정은 필수입니다.) systemd 서비스 파일은 스크립트가 실행 시점의 사용자/경로 값으로 직접
+생성합니다 (`scripts/trading_bot.service` 는 참고용 예시일 뿐 직접 쓰이지 않음).
 
-GitHub Actions 가 비밀번호 없이 서비스를 재시작할 수 있도록 sudoers 규칙을 추가하세요:
+GitHub Actions 가 비밀번호 없이 서비스를 재시작할 수 있도록 sudoers 규칙을 추가하세요
+(`install.sh` 마지막 출력에 본인 환경에 맞는 정확한 명령이 표시됩니다):
 ```bash
-echo "ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart trading_bot.service, /bin/systemctl is-active trading_bot.service" \
+echo "$(whoami) ALL=(ALL) NOPASSWD: /bin/systemctl restart trading_bot.service, /bin/systemctl is-active trading_bot.service" \
   | sudo tee /etc/sudoers.d/trading-bot-deploy
 sudo chmod 440 /etc/sudoers.d/trading-bot-deploy
 ```
@@ -94,10 +100,11 @@ sudo chmod 440 /etc/sudoers.d/trading-bot-deploy
 
 | Secret | 설명 |
 | --- | --- |
-| `SSH_HOST` | Oracle VM 공인 IP |
-| `SSH_USER` | `ubuntu` |
+| `SSH_HOST` | VM 공인 IP |
+| `SSH_USER` | VM에 SSH 접속할 리눅스 사용자명 (오라클은 보통 `ubuntu`, GCP는 계정마다 다름 - VM에서 `whoami` 로 확인) |
 | `SSH_PRIVATE_KEY` | VM 접속용 SSH 개인키 전문 |
 | `SSH_PORT` | (선택) 기본 22 |
+| `SSH_PROJECT_DIR` | VM에 clone한 절대경로 (예: `/home/사용자명/auto_trade`, VM에서 `pwd` 로 확인) |
 | `TELEGRAM_BOT_TOKEN` | 배포 완료 알림용 |
 | `TELEGRAM_CHAT_ID` | 배포 완료 알림 수신할 chat id |
 

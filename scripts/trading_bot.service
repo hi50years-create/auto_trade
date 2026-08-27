@@ -1,3 +1,5 @@
+# 참고용 예시 파일입니다. scripts/install.sh 가 실제 실행 사용자/경로를 자동 감지해
+# /etc/systemd/system/trading_bot.service 를 직접 생성하므로, 이 파일을 직접 쓸 필요는 없습니다.
 [Unit]
 Description=5-min Morning Breakout Auto Trading Bot (v10)
 After=network-online.target
