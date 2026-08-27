@@ -18,8 +18,10 @@ log = get_logger("screener")
 
 MANUAL_WATCHLIST_PATH = PROJECT_ROOT / "config" / "watchlist_manual.txt"
 
-# 등락률순위 API 에서 상한가로 간주할 최소 등락률 (%) - 상한가는 통상 +30% 근접
-LIMIT_UP_THRESHOLD_PCT = 29.5
+
+def _gain_label(pct: float) -> str:
+    """등락률로 "상한가"(literal_limit_up_pct 이상) vs "급등"(strong_gain_threshold_pct 이상)을 구분한다."""
+    return "상한가" if pct >= CONFIG.literal_limit_up_pct else "급등"
 
 # 거래량/거래대금순위 API는 개별 종목뿐 아니라 ETF/ETN(특히 레버리지/인버스 상품)이
 # 상위권을 대량 차지해 후보 슬롯을 오염시키는 경우가 실측으로 확인됐다 (예: "KODEX 200선물인버스2X").
@@ -95,11 +97,11 @@ def _candidates_from_ranking_apis(broker: BrokerBase) -> list[dict]:
         try:
             for row in broker.get_fluctuation_rank(top_n=30, market=market):
                 pct = float(_pick(row, "prdy_ctrt", default=0) or 0)
-                if pct >= LIMIT_UP_THRESHOLD_PCT:
+                if pct >= CONFIG.strong_gain_threshold_pct:
                     code = _pick(row, "stck_shrn_iscd", "mksc_shrn_iscd")
                     name = _pick(row, "hts_kor_isnm", default=code)
                     if code and not _is_fund_product(name):
-                        codes_seen[code] = {"code": code, "name": name, "reason": f"상한가({market})"}
+                        codes_seen[code] = {"code": code, "name": name, "reason": f"{_gain_label(pct)}({market})"}
         except Exception:
             log.exception("등락률순위 API 조회 실패 (market=%s)", market)
 
@@ -212,7 +214,7 @@ def build_daily_info(broker: BrokerBase, code: str) -> dict:
 
     prior_close = float(df.iloc[-2]["close"]) if len(df) >= 2 else prev_close
     change_pct = ((prev_close - prior_close) / prior_close * 100) if prior_close else 0
-    is_limit_up = change_pct >= LIMIT_UP_THRESHOLD_PCT
+    is_limit_up = change_pct >= CONFIG.strong_gain_threshold_pct
 
     return {
         "prev_close": prev_close,

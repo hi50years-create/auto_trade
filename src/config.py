@@ -86,7 +86,13 @@ class Config:
     slippage_pct: float = field(default_factory=lambda: _get_float("SLIPPAGE_PCT", 0.002))
     index_crash_threshold_pct: float = field(default_factory=lambda: _get_float("INDEX_CRASH_THRESHOLD_PCT", -1.2))
     gap_up_max_pct: float = field(default_factory=lambda: _get_float("GAP_UP_MAX_PCT", 5.0))
-    min_prev_trade_amount: float = field(default_factory=lambda: _get_float("MIN_PREV_TRADE_AMOUNT", 25_000_000_000))
+    min_prev_trade_amount: float = field(default_factory=lambda: _get_float("MIN_PREV_TRADE_AMOUNT", 15_000_000_000))
+    # 후보 포함 기준선(완화됨, 기본 20%). 이 값 이상이면 조건1-A(상한가 OR 급등)를 만족한 것으로
+    # 간주해 후보로 삼는다. 실제 라벨링(상한가 vs 급등)은 literal_limit_up_pct 로 별도 판정한다.
+    strong_gain_threshold_pct: float = field(default_factory=lambda: _get_float("STRONG_GAIN_THRESHOLD_PCT", 20.0))
+    # 진짜 "상한가"로 표기할 등락률 하한선. 한국 증시 가격제한폭은 +30%이나 호가단위 반올림으로
+    # 실제 상한가 마감은 보통 29.5~29.9% 사이로 찍힌다.
+    literal_limit_up_pct: float = field(default_factory=lambda: _get_float("LITERAL_LIMIT_UP_PCT", 29.5))
 
     # 시간 필터
     entry_window_start: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_START", "09:00:00")))
