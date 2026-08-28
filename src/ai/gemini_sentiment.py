@@ -62,23 +62,43 @@ def analyze_sentiment(stock_name: str, news_items: list[dict]) -> dict:
     news_block = "\n".join(f"- {n['title']}: {n['description']}" for n in news_items[:5])
     prompt = _PROMPT_TMPL.format(stock_name=stock_name, news_block=news_block)
 
-    _throttle()  # 15 RPM 무료 한도 보호 (기본 4.5초 간격)
-
     url = API_URL_TMPL.format(model=CONFIG.gemini_model)
     body = {"contents": [{"parts": [{"text": prompt}]}]}
-    try:
-        res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=30)
-        if res.status_code == 429:
-            log.warning("Gemini 429 Too Many Requests - 쿼터 초과, 5초 대기 후 1회 재시도")
-            time_lib.sleep(5)
+
+    # 429(쿼터초과)는 기존에도 1회 재시도가 있었지만, 503/타임아웃처럼 구글 쪽 일시적 장애에는
+    # 재시도가 전혀 없어서 잠깐의 hiccup에도 바로 "수동 확인 필요" 폴백으로 빠졌다
+    # (2026-08-28 실측: 두 종목 모두 503/ReadTimeout으로 폴백됨). 짧게 재시도를 추가한다.
+    _RETRY_BACKOFFS = (0.0, 3.0, 6.0)
+    last_err: Exception | None = None
+    for attempt, backoff in enumerate(_RETRY_BACKOFFS):
+        if backoff:
+            time_lib.sleep(backoff)
+        _throttle()  # 15 RPM 무료 한도 보호 (기본 4.5초 간격)
+        try:
             res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=30)
-        res.raise_for_status()
-        data = res.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        parsed = _extract_json(text)
-        sentiment = parsed.get("sentiment", "NEUTRAL").upper()
-        emoji = {"POSITIVE": "🟢", "NEUTRAL": "🟡", "NEGATIVE": "🔴"}.get(sentiment, "🟡")
-        return {"sentiment": sentiment, "summary": parsed.get("summary", ""), "emoji": emoji}
-    except Exception:
-        log.exception("Gemini 감성 분석 실패: %s", stock_name)
-        return fallback
+            if res.status_code == 429:
+                log.warning("Gemini 429 Too Many Requests - 쿼터 초과, 5초 대기 후 1회 재시도")
+                time_lib.sleep(5)
+                res = requests.post(url, params={"key": CONFIG.gemini_api_key}, json=body, timeout=30)
+            res.raise_for_status()
+            data = res.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            parsed = _extract_json(text)
+            sentiment = parsed.get("sentiment", "NEUTRAL").upper()
+            emoji = {"POSITIVE": "🟢", "NEUTRAL": "🟡", "NEGATIVE": "🔴"}.get(sentiment, "🟡")
+            return {"sentiment": sentiment, "summary": parsed.get("summary", ""), "emoji": emoji}
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_err = e
+            log.warning("Gemini 일시적 오류(%s) - %d/%d회차", type(e).__name__, attempt + 1, len(_RETRY_BACKOFFS))
+        except requests.exceptions.HTTPError as e:
+            last_err = e
+            if e.response is not None and e.response.status_code < 500:
+                log.exception("Gemini 감성 분석 실패(재시도 불가): %s", stock_name)
+                return fallback
+            log.warning("Gemini 서버 오류(%s) - %d/%d회차", e, attempt + 1, len(_RETRY_BACKOFFS))
+        except Exception:
+            log.exception("Gemini 감성 분석 실패: %s", stock_name)
+            return fallback
+
+    log.error("Gemini 감성 분석 반복 실패: %s (%s)", stock_name, last_err)
+    return fallback

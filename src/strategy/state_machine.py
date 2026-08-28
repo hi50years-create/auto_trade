@@ -58,8 +58,11 @@ class StockWatcher:
 
     async def run(self):
         log.info("[%s] 감시 시작 (시가=%s)", self.ctx.name, self.ctx.day_open_price)
-        try:
-            while not self._stop_requested:
+        # try/except 를 while 루프 전체가 아니라 매 tick마다 걸어둔다 - KIS 연결이 순간 끊기는
+        # 등 일시적 오류 한 번에 이 종목 감시가 통째로 조용히 죽는 것을 방지한다
+        # (2026-08-28 실측: 가온전선이 09:00:44 RemoteDisconnected 한 번으로 이후 감시가 전부 중단됨).
+        while not self._stop_requested:
+            try:
                 if self.state == "IDLE":
                     await self._tick_idle()
                 elif self.state == "WAIT_FOR_BREAKOUT":
@@ -69,13 +72,20 @@ class StockWatcher:
                 elif self.state == "CLOSED":
                     break
 
+                # 포지션 미보유 상태로 진입 제한 시간(09:30)이 지나면 더 기다려도 매수가 나갈 수
+                # 없으므로(risk_manager.is_entry_allowed_now), 장마감까지 폴링을 계속하지 않고
+                # 여기서 감시를 종료한다 - 불필요한 API 호출을 줄이기 위함.
+                if self.state in ("IDLE", "WAIT_FOR_BREAKOUT") and not time_utils.is_within_entry_window():
+                    log.info("[%s] 진입 제한 시간(09:30) 경과 및 포지션 미보유 - 감시 종료", self.ctx.name)
+                    break
+
                 if self.state != "POSITION_HOLDING" and time_utils.is_market_close_reached():
                     log.info("[%s] 장마감 도달, 미체결 관찰 종료", self.ctx.name)
                     break
+            except Exception:
+                log.exception("[%s] 감시 tick 오류 (일시적 오류로 간주, 계속 재시도)", self.ctx.name)
 
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-        except Exception:
-            log.exception("[%s] 감시 루프 예외 발생", self.ctx.name)
+            await asyncio.sleep(POLL_INTERVAL_SEC)
 
     # ------------------------------------------------------------ IDLE
     async def _tick_idle(self):

@@ -114,8 +114,7 @@ class TradingEngine:
             return not self.trading_blocked_today
 
         today = date.today().isoformat()
-        kospi = await asyncio.to_thread(self.broker.get_index_change_pct, "KOSPI")
-        kosdaq = await asyncio.to_thread(self.broker.get_index_change_pct, "KOSDAQ")
+        kospi, kosdaq = await self._read_index_with_settle_retry()
         index_ok, index_reason = check_market_index(kospi, kosdaq)
         database.set_daily_state(today, kospi, kosdaq, not index_ok, index_reason)
         self.index_checked_today = True
@@ -129,6 +128,26 @@ class TradingEngine:
             log.warning("종합주가지수 필터 작동 - 당일 거래 전면 중단: %s", index_reason)
             await telegram_bot.notify("🚨 [Emergency Block] 시장 전체 투매/급락 감지로 당일 모든 거래를 보류합니다. 현금 비중 100% 보존.")
         return index_ok
+
+    async def _read_index_with_settle_retry(self) -> tuple[float, float]:
+        """09:00:00 정각에 곧바로 지수를 조회하면 개별 종목 동시호가 매칭이 아직 다 안 끝나
+        KOSPI/KOSDAQ 등락률이 둘 다 0.0%로 읽히는 경우가 실측 확인됐다 (2026-08-28). 이 상태로
+        폭락 감지 긴급중단 필터를 판정하면 진짜 폭락장이어도 못 잡으므로, 두 지수가 동시에
+        정확히 0.0인(통계적으로 거의 불가능한) 비정상 케이스만 짧게 재조회한다
+        (최대 2회, 10초 간격 - 정상적으로 값이 나오는 날은 지연이 전혀 없다)."""
+        kospi = kosdaq = 0.0
+        for attempt in range(3):
+            kospi = await asyncio.to_thread(self.broker.get_index_change_pct, "KOSPI")
+            kosdaq = await asyncio.to_thread(self.broker.get_index_change_pct, "KOSDAQ")
+            if not (kospi == 0.0 and kosdaq == 0.0):
+                return kospi, kosdaq
+            if attempt < 2:
+                log.warning(
+                    "KOSPI/KOSDAQ 지수가 동시에 0.0%%로 읽힘 (개장 초반 동시호가 미반영 의심) - "
+                    "10초 후 재조회 (%d/2)", attempt + 1
+                )
+                await asyncio.sleep(10)
+        return kospi, kosdaq
 
     async def _activate_candidates(self):
         """self.passed_candidates 중 아직 감시를 시작하지 않은 종목의 시가 갭 검증 + 감시 개시.
