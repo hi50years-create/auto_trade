@@ -66,6 +66,19 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
 
+echo "6.5) systemd 표준출력 로그(logs/systemd.log) logrotate 등록 (앱 자체 로그는 이미 7일 자동회전되지만,"
+echo "     이 파일은 별도 관리가 없어 무한정 커지므로 디스크 고갈 방지용)"
+sudo tee "/etc/logrotate.d/trading-bot-systemd" > /dev/null <<EOF
+$PROJECT_DIR/logs/systemd.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+
 echo "7) 서비스 상태 확인"
 sleep 2
 sudo systemctl status "$SERVICE_NAME" --no-pager
