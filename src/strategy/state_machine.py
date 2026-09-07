@@ -121,7 +121,7 @@ class StockWatcher:
         ask_bid_ratio = snap.get("ask_bid_ratio", 0.0)
         is_sd_ok = vol_power >= 100.0 and ask_bid_ratio >= 120.0
 
-        if not (is_cross_above and is_bullish and body_pct >= 0.02 and is_volume_ok and is_sd_ok):
+        if not (is_cross_above and is_bullish and body_pct >= CONFIG.breakout_body_min_pct and is_volume_ok and is_sd_ok):
             return
 
         # v10 진입 제한 시간 필터 (하드 컷오프 - 09:30 초과 시 해당 종목 영구 진입 금지)

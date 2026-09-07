@@ -98,6 +98,9 @@ class Config:
     slippage_pct: float = field(default_factory=lambda: _get_float("SLIPPAGE_PCT", 0.002))
     index_crash_threshold_pct: float = field(default_factory=lambda: _get_float("INDEX_CRASH_THRESHOLD_PCT", -1.2))
     gap_up_max_pct: float = field(default_factory=lambda: _get_float("GAP_UP_MAX_PCT", 5.0))
+    # 3분봉 돌파 캔들의 최소 몸통 크기(비율, 0.02=2%). 2026-09-07 실측: 로보티즈가 상향돌파+양봉+
+    # 거래량 조건을 다 만족했는데 몸통이 1.44%라 2% 기준에 못 미쳐 진입을 놓친 사례를 보고 완화.
+    breakout_body_min_pct: float = field(default_factory=lambda: _get_float("BREAKOUT_BODY_MIN_PCT", 0.013))
     min_prev_trade_amount: float = field(default_factory=lambda: _get_float("MIN_PREV_TRADE_AMOUNT", 15_000_000_000))
     # 후보 포함 기준선(완화됨, 기본 20%). 이 값 이상이면 조건1-A(상한가 OR 급등)를 만족한 것으로
     # 간주해 후보로 삼는다. 실제 라벨링(상한가 vs 급등)은 literal_limit_up_pct 로 별도 판정한다.
