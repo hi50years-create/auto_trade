@@ -19,6 +19,33 @@ from src.config import CONFIG, PROJECT_ROOT
 _root_configured = False
 
 
+class _SecretRedactFilter(logging.Filter):
+    """python-telegram-bot 내부 httpx 클라이언트가 'HTTP Request: POST https://api.telegram.org/bot<TOKEN>/...'
+    형태로 URL에 토큰이 박힌 요청 로그를 INFO 레벨로 남기는 것이 실측 확인됐다 (2026-09-07, 루트 로거에
+    핸들러를 붙이면서 이 로그도 함께 파일/콘솔에 찍히기 시작함). httpx 로거는 별도로 WARNING 이상만
+    남기도록 낮춰뒀지만, 다른 라이브러리가 비슷하게 URL/쿼리에 비밀값을 남길 가능성에 대비해 알려진
+    비밀값 문자열을 로그에서 무조건 마스킹하는 필터를 루트 로거에 추가로 걸어둔다 (다중 방어)."""
+
+    def __init__(self, secrets: list[str]):
+        super().__init__()
+        self._secrets = [s for s in secrets if s]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._secrets:
+            return True
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        redacted = msg
+        for s in self._secrets:
+            redacted = redacted.replace(s, "***REDACTED***")
+        if redacted != msg:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
 def _configure_root() -> None:
     global _root_configured
     if _root_configured:
@@ -27,12 +54,31 @@ def _configure_root() -> None:
     root = logging.getLogger()
     root.setLevel(CONFIG.log_level.upper())
 
+    # 주의: 이 필터는 root Logger가 아니라 각 핸들러에 걸어야 한다. Logger.addFilter()는 그 로거
+    # 자신에게 직접 로그를 남길 때만 적용되고, 자식 로거(main/kis_client/...)가 올려보낸(propagate)
+    # 레코드는 callHandlers()가 핸들러를 바로 호출하므로 root의 Logger 필터를 건너뛴다 - 처음에
+    # root.addFilter()로 걸었다가 실제로는 전혀 마스킹이 안 되는 걸 실측으로 확인하고 고쳤다.
+    redact_filter = _SecretRedactFilter([
+        CONFIG.telegram_bot_token,
+        CONFIG.kis_app_key,
+        CONFIG.kis_app_secret,
+        CONFIG.naver_client_secret,
+        CONFIG.gemini_api_key,
+        CONFIG.web_secret_key,
+    ])
+
+    # httpx(python-telegram-bot 내부 HTTP 클라이언트)는 요청 URL을 통째로 INFO 로그에 남기는데,
+    # 텔레그램 Bot API는 URL 자체에 봇 토큰이 박혀 있는 방식(.../bot<TOKEN>/...)이라 그대로 두면
+    # 매 요청마다 토큰이 로그에 평문으로 남는다. 요청 자체는 굳이 안 남아도 되므로 WARNING으로 낮춘다.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
+    console.addFilter(redact_filter)
     root.addHandler(console)
 
     log_path = PROJECT_ROOT / CONFIG.log_path
@@ -44,6 +90,7 @@ def _configure_root() -> None:
     )
     file_handler.suffix = "%Y-%m-%d"
     file_handler.setFormatter(fmt)
+    file_handler.addFilter(redact_filter)
     root.addHandler(file_handler)
 
     _root_configured = True
