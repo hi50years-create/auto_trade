@@ -69,12 +69,18 @@ python3 -m py_compile $(find src -name '*.py')
 
 ## 2. 클라우드 무료 VM 배포 (최초 1회, 수동)
 
-Oracle Cloud Free Tier든 GCP Always-Free든 동일한 절차입니다. `install.sh` 가 실행 사용자명과
-설치 경로를 자동 감지하므로 오라클의 관례적인 "ubuntu" 계정이 아니어도(GCP는 계정마다
-리눅스 사용자명이 다름) 그대로 동작합니다.
+Oracle Cloud Free Tier든 GCP Always-Free든 동일한 절차입니다 (현재 운영 인스턴스는 GCP Compute
+Engine). `install.sh` 가 실행 사용자명과 설치 경로를 자동 감지하므로 오라클의 관례적인 "ubuntu"
+계정이 아니어도(GCP는 계정마다 리눅스 사용자명이 다름) 그대로 동작합니다.
+
+GCP는 `gcloud` CLI로 접속하는 게 가장 간단합니다 - 리눅스 계정명/SSH 키를 따로 몰라도
+IAM 권한만 있으면 `gcloud`가 알아서 키 배포까지 처리합니다:
+```bash
+gcloud compute ssh <인스턴스명> --zone <존>
+```
 
 ```bash
-# VM 에 SSH 접속 후 (예: gcloud compute ssh <인스턴스명> --zone <존>)
+# 위 명령으로 VM에 SSH 접속한 뒤
 git clone <이 저장소 URL> ~/auto_trade
 cd ~/auto_trade
 cp config/.env.example .env && nano .env   # 실전/모의 API 키 입력
@@ -82,7 +88,7 @@ bash scripts/install.sh
 ```
 
 `install.sh` 가 타임존을 `Asia/Seoul` 로 설정하고, venv/의존성 설치, systemd 서비스 등록까지
-자동으로 수행합니다. (진입 제한 시간 09:00~09:30 판정이 서버 로컬시각 기준이므로 타임존
+자동으로 수행합니다. (진입 제한 시간 09:00~10:30(ENTRY_WINDOW_START~END) 판정이 서버 로컬시각 기준이므로 타임존
 설정은 필수입니다.) systemd 서비스 파일은 스크립트가 실행 시점의 사용자/경로 값으로 직접
 생성합니다 (`scripts/trading_bot.service` 는 참고용 예시일 뿐 직접 쓰이지 않음).
 
@@ -138,10 +144,11 @@ sudo chmod 440 /etc/sudoers.d/trading-bot-deploy
 전송되며 5분 이내에 입력해야 합니다 - 실질적으로 본인 텔레그램 앱이 있어야만 로그인 가능합니다.
 매매 제어(청산/중지)는 대시보드가 아닌 텔레그램 명령으로만 가능합니다 (조회 전용).
 
-VM에서 외부(인터넷)로 열려면 `.env`의 `WEB_HOST=0.0.0.0`으로 바꾸고 오라클 클라우드
-보안목록(Security List)에서 `WEB_PORT`를 열어야 합니다. 이 경우 HTTPS가 없으므로 신뢰할 수
-없는 네트워크에서는 세션 쿠키가 노출될 수 있습니다 - 가능하면 오라클 보안목록을 본인 IP로
-제한하거나, nginx+certbot 등으로 리버스 프록시/TLS를 앞단에 두는 것을 권장합니다.
+VM에서 외부(인터넷)로 열려면 `.env`의 `WEB_HOST=0.0.0.0`으로 바꾸고 방화벽에서 `WEB_PORT`를
+열어야 합니다 (오라클은 보안목록(Security List), GCP는 VPC 방화벽 규칙 - `gcloud compute
+firewall-rules create` 또는 콘솔에서 설정). 이 경우 HTTPS가 없으므로 신뢰할 수 없는
+네트워크에서는 세션 쿠키가 노출될 수 있습니다 - 가능하면 방화벽 규칙을 본인 IP로 제한하거나,
+nginx+certbot 등으로 리버스 프록시/TLS를 앞단에 두는 것을 권장합니다.
 
 ## 4.6. VM 없이 로컬(Mac 등)에서 장중 실행
 
@@ -159,23 +166,39 @@ bash scripts/run_local.sh
 
 ## 5. 운영 중 로그 확인
 
+VM에 접속해서 직접 보려면 (`gcloud compute ssh <인스턴스명> --zone <존>` 로 먼저 접속):
 ```bash
 sudo journalctl -u trading_bot.service -f     # systemd 표준출력
 tail -f ~/auto_trade/logs/trading_bot.log     # 애플리케이션 로그 (매일 자정 회전, 기본 7일 보관)
 ```
 
+로컬 Mac에서 접속 없이 바로 조회하고 싶으면 `--command`로 원격 실행 후 결과만 받아올 수 있습니다:
+```bash
+gcloud compute ssh <인스턴스명> --zone <존> \
+  --command="tail -100 ~/auto_trade/logs/trading_bot.log"
+```
+
 ## 5.5. DB 조회
 
-CLI로 빠르게 보려면:
+CLI로 빠르게 보려면 (로컬에서 원격 실행):
 ```bash
-sqlite3 ~/auto_trade/data/trading_bot.db "SELECT * FROM trades ORDER BY id DESC LIMIT 10;"
+gcloud compute ssh <인스턴스명> --zone <존> \
+  --command="sqlite3 -header -column ~/auto_trade/data/trading_bot.db \"SELECT * FROM trades ORDER BY id DESC LIMIT 10;\""
+```
+
+주요 테이블: `watchlist`(1차 스크리닝 통과 종목, PK는 `stock_code`+`trade_date` - 날짜 컬럼명이
+`trade_date`인 점 주의), `trades`(체결/청산 내역), `breakout_snapshot`(전일 장마감 스냅샷),
+`daily_state`(당일 지수 필터/거래중단 상태). 오늘자 감시 종목만 보려면:
+```bash
+gcloud compute ssh <인스턴스명> --zone <존> \
+  --command="sqlite3 -header -column ~/auto_trade/data/trading_bot.db \"SELECT stock_code, stock_name, state, day_open_price, gap_up_pct FROM watchlist WHERE trade_date='2026-09-16';\""
 ```
 
 GUI로 보고 싶으면 `sqlite-web`을 VM에 별도 venv로 설치해 systemd 서비스(`sqlite-web.service`)로
 띄워두었습니다. 보안을 위해 `127.0.0.1:8081`에서만 열려 있고(외부 방화벽 미개방), 읽기 전용
 (`-r`)입니다. 로컬 Mac에서 SSH 터널로 접속하세요:
 ```bash
-ssh -L 8081:localhost:8081 <사용자명>@<VM IP>
+gcloud compute ssh <인스턴스명> --zone <존> -- -L 8081:localhost:8081
 # 연결된 채로 브라우저에서 http://localhost:8081 접속
 ```
 

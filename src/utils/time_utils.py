@@ -27,7 +27,7 @@ def is_weekday(d: date | None = None) -> bool:
 
 
 def is_within_entry_window(t: time | None = None) -> bool:
-    """신규 매수 진입 허용 시간(기본 09:00:00~09:30:00)인지 여부."""
+    """신규 매수 진입 허용 시간(ENTRY_WINDOW_START~ENTRY_WINDOW_END, 기본 09:00~10:30)인지 여부."""
     t = t or now_time()
     return CONFIG.entry_window_start <= t <= CONFIG.entry_window_end
 

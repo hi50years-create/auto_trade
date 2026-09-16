@@ -64,7 +64,7 @@ def check_gap_up(day_open_price: float, prev_close_price: float) -> tuple[bool, 
 
 
 def is_entry_allowed_now() -> bool:
-    """신규 매수 진입 허용 시간(09:00:00~09:30:00)인지 여부."""
+    """신규 매수 진입 허용 시간(ENTRY_WINDOW_START~ENTRY_WINDOW_END, 기본 09:00~10:30)인지 여부."""
     return time_utils.is_within_entry_window()
 
 

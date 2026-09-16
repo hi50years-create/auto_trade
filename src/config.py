@@ -109,9 +109,18 @@ class Config:
     # 실제 상한가 마감은 보통 29.5~29.9% 사이로 찍힌다.
     literal_limit_up_pct: float = field(default_factory=lambda: _get_float("LITERAL_LIMIT_UP_PCT", 29.5))
 
+    # 저점 반등(눌림목) 매수: 시가 돌파 신호가 아예 없는 날(어제 급등주 차익실현 매도일)에도
+    # 장중 저점을 찍고 반등하는 종목을 잡기 위한 별도 진입 경로. state_machine.py 참고.
+    pullback_reversal_enabled: bool = field(
+        default_factory=lambda: _get_str("PULLBACK_REVERSAL_ENABLED", "true").lower() == "true"
+    )
+    pullback_min_volume: float = field(default_factory=lambda: _get_float("PULLBACK_MIN_VOLUME", 5_000))
+
     # 시간 필터
     entry_window_start: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_START", "09:00:00")))
-    entry_window_end: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_END", "09:30:00")))
+    # 2026-09-16 실측: 어제 급등주가 익일 차익실현 매도로 짓눌리는 날엔 09:30 마감이 너무 짧아
+    # 돌파 신호(예: 09:45 발생 사례)를 놓쳤다. 10:30으로 연장.
+    entry_window_end: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("ENTRY_WINDOW_END", "10:30:00")))
     market_close_time: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("MARKET_CLOSE_TIME", "15:30:00")))
     pre_screen_time: dtime = field(default_factory=lambda: _parse_hhmmss(_get_str("PRE_SCREEN_TIME", "08:50:00")))
     # 장마감 직후 스냅샷 계산 시각. 15:30 종가 확정에 약간의 지연 버퍼(5분)를 둔다.

@@ -84,6 +84,13 @@ class TradingEngine:
 
             news_items = await asyncio.to_thread(naver_news.search_news, name)
             sentiment = await asyncio.to_thread(gemini_sentiment.analyze_sentiment, name, news_items)
+            # 08:50 시점 현재가 - 전일 종가 대비 지금 얼마나 움직였는지 알림에서 바로 보기 위함
+            # (장전 단일가/동시호가 구간이라 몇 초 지연되거나 0이 올 수 있어 실패해도 조용히 무시한다).
+            try:
+                current_price = await asyncio.to_thread(self.broker.get_current_price, code)
+            except Exception:
+                log.exception("[%s] 08:50 현재가 조회 실패", name)
+                current_price = 0.0
 
             database.upsert_watchlist(
                 today, code,
@@ -93,11 +100,17 @@ class TradingEngine:
                 news_sentiment=sentiment["sentiment"], news_summary=sentiment["summary"],
                 news_url=news_items[0]["link"] if news_items else "",
             )
-            passed.append({**cand, "daily_info": daily_info, "sentiment": sentiment})
+            passed.append({**cand, "daily_info": daily_info, "sentiment": sentiment, "current_price": current_price})
+
+            price_line = ""
+            if current_price and daily_info["prev_close"]:
+                chg_pct = (current_price - daily_info["prev_close"]) / daily_info["prev_close"] * 100
+                price_line = f"현재가: {current_price:,.0f}원 (전일 종가대비 {chg_pct:+.2f}%)\n"
 
             await telegram_bot.notify(
                 f"📢 [08:50] 1차 예비 스크리닝 통과\n"
                 f"종목명: {name}\n"
+                f"{price_line}"
                 f"전일 거래대금: {daily_info['prev_trade_amount']/1e8:.1f}억원\n"
                 f"AI 뉴스 분석 ({sentiment['emoji']} {sentiment['sentiment']}): {sentiment['summary']}"
             )
