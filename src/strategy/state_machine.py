@@ -112,12 +112,30 @@ class StockWatcher:
         df = await asyncio.to_thread(self.broker.get_minute_ohlcv_3m, self.ctx.code)
         if df.empty:
             return
-        last_bar = df.iloc[-1]
-        if self._last_bar_time == last_bar["time"]:
+
+        # 2026-09-21 실측: get_minute_ohlcv_3m 은 최근 ~10개 3분봉을 매번 통째로 반환하는데,
+        # 예전엔 그중 df.iloc[-1](가장 최신 봉) 하나만 보고 나머지는 버렸다. KIS 모의투자 서버가
+        # 빈번히 일시적 오류/연결끊김을 내는 걸 감안하면, 한 번의 폴링 실패로 3분봉 하나가 통째로
+        # 누락될 수 있는데 - 저점반등 판정은 "신저가+양봉" -> "확인봉" 2개 봉이 연속으로 필요해서
+        # 봉 하나만 스킵돼도 패턴이 통째로 깨진다. 당일 실거래에서 오프라인 재현으로는 6/7종목에서
+        # 신호가 나왔어야 했는데 실제 로그엔 0건이었던 게 이 버그로 설명된다. 마지막 처리 시각
+        # 이후의 봉을 전부 순서대로 처리하도록 고친다.
+        if self._last_bar_time is None:
+            unprocessed = df.iloc[[-1]]
+        else:
+            unprocessed = df[df["time"] > self._last_bar_time]
+        if unprocessed.empty:
             await asyncio.sleep(BAR_POLL_INTERVAL_SEC - POLL_INTERVAL_SEC)
             return
-        self._last_bar_time = last_bar["time"]
 
+        for _, last_bar in unprocessed.iterrows():
+            self._last_bar_time = last_bar["time"]
+            entered = await self._process_bar(last_bar)
+            if entered:
+                return
+
+    async def _process_bar(self, last_bar) -> bool:
+        """완성된 3분봉 하나를 판정한다. 진입을 시도했으면(체결 여부와 무관) True."""
         opn, cls, low, vol = (
             float(last_bar["open"]), float(last_bar["close"]), float(last_bar["low"]), float(last_bar["volume"])
         )
@@ -144,14 +162,16 @@ class StockWatcher:
             is_sd_ok = vol_power >= 100.0 and ask_bid_ratio >= 120.0
             if is_sd_ok:
                 await self._attempt_entry(signal_price=cls, entry_reason="시가 돌파")
-                return
+                return True
 
         if pullback_signal is not None:
             await self._attempt_entry(
                 signal_price=pullback_signal["price"], entry_reason="저점 반등",
                 structural_stop_price=pullback_signal["stop"],
             )
-            return
+            return True
+
+        return False
 
     def _update_pullback_state(self, low: float, opn: float, cls: float, vol: float) -> dict | None:
         """시가 돌파 신호가 없는 날에도 장중 저점을 찍고 반등하는 종목을 잡기 위한 보조 경로.
