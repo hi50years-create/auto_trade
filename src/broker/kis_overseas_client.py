@@ -30,7 +30,8 @@ TR_OVRS_ORDER_BUY = {"real": "TTTT1002U", "demo": "VTTT1002U"}
 TR_OVRS_ORDER_SELL = {"real": "TTTT1006U", "demo": "VTTT1001U"}
 TR_OVRS_ORDER_CANCEL = {"real": "TTTT1004U", "demo": "VTTT1004U"}
 TR_OVRS_NCCS = "TTTS3018R"          # 미체결내역조회 (실전/모의 공통)
-TR_OVRS_BALANCE = {"real": "TTTS3012R", "demo": "VTTS3012R"}  # 해외주식 잔고조회
+TR_OVRS_BALANCE = {"real": "TTTS3012R", "demo": "VTTS3012R"}  # 해외주식 잔고조회 (보유종목용)
+TR_OVRS_PRESENT_BALANCE = {"real": "CTRP6504R", "demo": "VTRP6504R"}  # 해외주식 체결기준현재잔고 (예수금용)
 TR_OVRS_CURRENT_PRICE = "HHDFS00000300"     # 해외주식 현재가 (실전/모의 공통)
 TR_OVRS_DAILY_CHART = "HHDFS76240000"       # 해외주식 기간별시세(일봉)
 TR_OVRS_MINUTE_CHART = "HHDFS76950200"      # 해외주식 분봉조회
@@ -193,13 +194,22 @@ class KISOverseasClient(KISClient):
                 })
             except (KeyError, TypeError, ValueError):
                 continue
+
+        # 예수금은 위 잔고조회(inquire-balance)가 아니라 별도 엔드포인트(체결기준현재잔고)의
+        # output3(딕셔너리 하나, 리스트 아님)에 들어있다 - 2026-09-21 실측으로 확인.
         cash = 0.0
-        for row in data.get("output2", []):
-            try:
-                cash = float(row.get("frcr_dncl_amt_2", row.get("frcr_evlu_amt2", 0)))
-                break
-            except (TypeError, ValueError):
-                pass
+        try:
+            bal_data = self._get(
+                "/uapi/overseas-stock/v1/trading/inquire-present-balance", TR_OVRS_PRESENT_BALANCE[self.env_dv],
+                {
+                    "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                    "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "00",
+                },
+            )
+            cash = float(bal_data.get("output3", {}).get("frcr_use_psbl_amt", 0))
+        except Exception:
+            log.exception("해외 예수금 조회 실패")
+
         return {"cash_balance": cash, "holdings": holdings}
 
     # ------------------------------------------------------------ 실시간 (v1: 미지원, REST 폴백)
