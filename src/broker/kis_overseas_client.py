@@ -197,6 +197,8 @@ class KISOverseasClient(KISClient):
 
         # 예수금은 위 잔고조회(inquire-balance)가 아니라 별도 엔드포인트(체결기준현재잔고)의
         # output3(딕셔너리 하나, 리스트 아님)에 들어있다 - 2026-09-21 실측으로 확인.
+        # 통합증거금 계좌는 통화별 "사용가능금액"(frcr_use_psbl_amt)이 실거래 전까지 0으로 찍히고,
+        # 대신 "총자산금액"(tot_asst_amt, 원화환산)에 배정된 고정한도가 반영된다 - 화면엔 이걸 쓴다.
         cash = 0.0
         try:
             bal_data = self._get(
@@ -206,7 +208,9 @@ class KISOverseasClient(KISClient):
                     "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "00",
                 },
             )
-            cash = float(bal_data.get("output3", {}).get("frcr_use_psbl_amt", 0))
+            output3 = bal_data.get("output3", {})
+            frcr_usable = float(output3.get("frcr_use_psbl_amt", 0))
+            cash = frcr_usable if frcr_usable > 0 else float(output3.get("tot_asst_amt", 0))
         except Exception:
             log.exception("해외 예수금 조회 실패")
 
