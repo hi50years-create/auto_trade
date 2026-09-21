@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time as time_lib
@@ -101,7 +102,14 @@ class KISClient(BrokerBase):
         try:
             data = json.loads(TOKEN_CACHE_PATH.read_text(encoding="utf-8"))
             expire_at = datetime.fromisoformat(data["expire_at"])
-            if expire_at > datetime.now() + timedelta(minutes=10) and data.get("env") == self.env_dv:
+            # 2026-09-21 실측: 캐시가 env(real/demo)로만 구분되고 app_key는 안 봐서, 모의투자
+            # 앱키를 재발급(계좌 재발급 등)해도 옛 앱키로 받은 토큰을 계속 재사용해 계좌 불일치
+            # 오류를 유발했다. app_key 해시까지 일치해야 캐시를 재사용한다.
+            if (
+                expire_at > datetime.now() + timedelta(minutes=10)
+                and data.get("env") == self.env_dv
+                and data.get("app_key_hash") == self._app_key_hash()
+            ):
                 return data["access_token"], expire_at
         except Exception:
             return None
@@ -109,9 +117,18 @@ class KISClient(BrokerBase):
 
     def _save_token_cache(self, token: str, expire_at: datetime):
         TOKEN_CACHE_PATH.write_text(
-            json.dumps({"access_token": token, "expire_at": expire_at.isoformat(), "env": self.env_dv}),
+            json.dumps({
+                "access_token": token,
+                "expire_at": expire_at.isoformat(),
+                "env": self.env_dv,
+                "app_key_hash": self._app_key_hash(),
+            }),
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _app_key_hash() -> str:
+        return hashlib.sha256(CONFIG.kis_app_key.encode()).hexdigest()
 
     def _issue_token(self):
         url = f"{self.rest_base}/oauth2/tokenP"
