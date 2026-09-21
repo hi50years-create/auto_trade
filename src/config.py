@@ -49,11 +49,20 @@ class Config:
     # 운영 모드
     trading_mode: str = field(default_factory=lambda: _get_str("TRADING_MODE", "paper"))
 
-    # KIS
+    # KIS (국내)
     kis_app_key: str = field(default_factory=lambda: _get_str("KIS_APP_KEY", required=True))
     kis_app_secret: str = field(default_factory=lambda: _get_str("KIS_APP_SECRET", required=True))
     kis_cano: str = field(default_factory=lambda: _get_str("KIS_CANO", required=True))
     kis_acnt_prdt_cd: str = field(default_factory=lambda: _get_str("KIS_ACNT_PRDT_CD", "01"))
+
+    # KIS (해외/미국) - 국내와 별도 앱키/계좌 (2026-09-21 실측: KIS는 실전/모의조차 서로 다른
+    # 앱키를 쓰므로, 해외 전용 앱키+모의계좌도 별도로 발급받아야 한다). 미입력 시 미국 마켓
+    # 엔진은 비활성화된다 (main.py 에서 필수값 존재 여부로 기동 여부 판단).
+    kis_us_app_key: str = field(default_factory=lambda: _get_str("KIS_US_APP_KEY", ""))
+    kis_us_app_secret: str = field(default_factory=lambda: _get_str("KIS_US_APP_SECRET", ""))
+    kis_us_cano: str = field(default_factory=lambda: _get_str("KIS_US_CANO", ""))
+    kis_us_acnt_prdt_cd: str = field(default_factory=lambda: _get_str("KIS_US_ACNT_PRDT_CD", "01"))
+    us_market_enabled: bool = field(default_factory=lambda: _get_str("US_MARKET_ENABLED", "false").lower() == "true")
 
     # Naver
     naver_client_id: str = field(default_factory=lambda: _get_str("NAVER_CLIENT_ID", ""))

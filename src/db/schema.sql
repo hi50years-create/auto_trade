@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS trades (
     result TEXT,
     order_no TEXT,
     trading_mode TEXT NOT NULL,
+    market TEXT NOT NULL DEFAULT 'KR',  -- 'KR' | 'US' (2026-09-21 미국 마켓 추가)
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS watchlist (
     news_sentiment TEXT,
     news_summary TEXT,
     news_url TEXT,
+    market TEXT NOT NULL DEFAULT 'KR',  -- 국내 종목코드(숫자6자리)와 미국 티커(영문)는 형식이
+                                         -- 겹칠 일이 없어 PK는 그대로 두고 컬럼만 추가했다.
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (stock_code, trade_date)
 );
@@ -37,6 +40,7 @@ CREATE TABLE IF NOT EXISTS daily_state (
     kosdaq_change_pct REAL,
     trading_blocked INTEGER NOT NULL DEFAULT 0,
     block_reason TEXT,
+    market TEXT NOT NULL DEFAULT 'KR',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 

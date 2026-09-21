@@ -39,3 +39,8 @@ def snap_up_to_tick(price: float) -> int:
     체결되지 않도록(계산된 목표가 이상만 인정) 내림이 아닌 올림을 쓴다."""
     tick = get_tick_size(price)
     return int(math.ceil(price / tick) * tick)
+
+
+def usd_round(price: float) -> float:
+    """미국주식은 KRX 같은 계단식 호가단위가 없고 통상 센트($0.01) 단위다."""
+    return round(price, 2)

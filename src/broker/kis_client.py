@@ -35,7 +35,7 @@ PAPER_REST_BASE = "https://openapivts.koreainvestment.com:29443"
 REAL_WS_URL = "ws://ops.koreainvestment.com:21000"
 PAPER_WS_URL = "ws://ops.koreainvestment.com:31000"
 
-TOKEN_CACHE_PATH = PROJECT_ROOT / ".kis_token_cache.json"
+TOKEN_CACHE_DIR = PROJECT_ROOT
 
 # TR_ID (실전 / 모의) - 2026-08 KIS 공식 examples_llm 기준 검증됨
 TR_ORDER_BUY = {"real": "TTTC0012U", "demo": "VTTC0012U"}
@@ -58,7 +58,18 @@ INDEX_CODE = {"KOSPI": "0001", "KOSDAQ": "1001"}
 
 
 class KISClient(BrokerBase):
-    def __init__(self):
+    def __init__(
+        self, app_key: str | None = None, app_secret: str | None = None,
+        cano: str | None = None, acnt_prdt_cd: str | None = None,
+    ):
+        # 자격증명을 생성자 인자로 받게 한 이유: KISOverseasClient(해외주식)가 국내와 완전히
+        # 다른 앱키/계좌를 쓰면서도 인증/세션/토큰캐시/쓰로틀 배관은 그대로 물려받아 쓰기 위함
+        # (2026-09-21, 국내 실전/모의조차 서로 다른 앱키를 쓴다는 걸 실측 확인한 뒤 도입).
+        self.app_key = app_key or CONFIG.kis_app_key
+        self.app_secret = app_secret or CONFIG.kis_app_secret
+        self.cano = cano or CONFIG.kis_cano
+        self.acnt_prdt_cd = acnt_prdt_cd or CONFIG.kis_acnt_prdt_cd
+
         self.env_dv = "demo" if not CONFIG.is_live else "real"
         self.rest_base = PAPER_REST_BASE if self.env_dv == "demo" else REAL_REST_BASE
         self.ws_url = PAPER_WS_URL if self.env_dv == "demo" else REAL_WS_URL
@@ -96,11 +107,17 @@ class KISClient(BrokerBase):
             return
         self._issue_token()
 
+    def _token_cache_path(self) -> Path:
+        # 앱키별로 별도 파일에 캐시한다 (국내/해외 클라이언트가 같은 파일을 공유하면 서로
+        # 캐시를 무효화시켜가며 매번 재인증하게 된다).
+        return TOKEN_CACHE_DIR / f".kis_token_cache.{self._app_key_hash()[:12]}.json"
+
     def _load_cached_token(self):
-        if not TOKEN_CACHE_PATH.exists():
+        path = self._token_cache_path()
+        if not path.exists():
             return None
         try:
-            data = json.loads(TOKEN_CACHE_PATH.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             expire_at = datetime.fromisoformat(data["expire_at"])
             # 2026-09-21 실측: 캐시가 env(real/demo)로만 구분되고 app_key는 안 봐서, 모의투자
             # 앱키를 재발급(계좌 재발급 등)해도 옛 앱키로 받은 토큰을 계속 재사용해 계좌 불일치
@@ -116,7 +133,7 @@ class KISClient(BrokerBase):
         return None
 
     def _save_token_cache(self, token: str, expire_at: datetime):
-        TOKEN_CACHE_PATH.write_text(
+        self._token_cache_path().write_text(
             json.dumps({
                 "access_token": token,
                 "expire_at": expire_at.isoformat(),
@@ -126,16 +143,15 @@ class KISClient(BrokerBase):
             encoding="utf-8",
         )
 
-    @staticmethod
-    def _app_key_hash() -> str:
-        return hashlib.sha256(CONFIG.kis_app_key.encode()).hexdigest()
+    def _app_key_hash(self) -> str:
+        return hashlib.sha256(self.app_key.encode()).hexdigest()
 
     def _issue_token(self):
         url = f"{self.rest_base}/oauth2/tokenP"
         body = {
             "grant_type": "client_credentials",
-            "appkey": CONFIG.kis_app_key,
-            "appsecret": CONFIG.kis_app_secret,
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
         }
         res = self._session.post(url, json=body, timeout=10)
         res.raise_for_status()
@@ -155,8 +171,8 @@ class KISClient(BrokerBase):
         url = f"{self.rest_base}/oauth2/Approval"
         body = {
             "grant_type": "client_credentials",
-            "appkey": CONFIG.kis_app_key,
-            "secretkey": CONFIG.kis_app_secret,
+            "appkey": self.app_key,
+            "secretkey": self.app_secret,
         }
         res = self._session.post(url, json=body, timeout=10)
         res.raise_for_status()
@@ -169,8 +185,8 @@ class KISClient(BrokerBase):
         h = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self._access_token}",
-            "appkey": CONFIG.kis_app_key,
-            "appsecret": CONFIG.kis_app_secret,
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
             "tr_id": tr_id,
             "custtype": "P",
         }
@@ -413,8 +429,8 @@ class KISClient(BrokerBase):
     def _place_order(self, code: str, qty: int, price: int, is_buy: bool, ord_dvsn: str = "00") -> OrderResult:
         tr_id = (TR_ORDER_BUY if is_buy else TR_ORDER_SELL)[self.env_dv]
         body = {
-            "CANO": CONFIG.kis_cano,
-            "ACNT_PRDT_CD": CONFIG.kis_acnt_prdt_cd,
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt_cd,
             "PDNO": code,
             "ORD_DVSN": ord_dvsn,  # 00: 지정가, 01: 시장가
             "ORD_QTY": str(qty),
@@ -431,8 +447,8 @@ class KISClient(BrokerBase):
     def cancel_order(self, order_no: str, code: str, qty: int) -> OrderResult:
         tr_id = TR_ORDER_CANCEL[self.env_dv]
         body = {
-            "CANO": CONFIG.kis_cano,
-            "ACNT_PRDT_CD": CONFIG.kis_acnt_prdt_cd,
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt_cd,
             "KRX_FWDG_ORD_ORGNO": "",
             "ORGN_ODNO": order_no,
             "ORD_DVSN": "00",
@@ -453,8 +469,8 @@ class KISClient(BrokerBase):
             "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl",
             tr_id,
             {
-                "CANO": CONFIG.kis_cano,
-                "ACNT_PRDT_CD": CONFIG.kis_acnt_prdt_cd,
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
                 "INQR_DVSN_1": "0",  # 0: 주문순
                 "INQR_DVSN_2": "0",  # 0: 전체(매도+매수)
                 "CTX_AREA_FK100": "",
@@ -510,8 +526,8 @@ class KISClient(BrokerBase):
             "/uapi/domestic-stock/v1/trading/inquire-balance",
             tr_id,
             {
-                "CANO": CONFIG.kis_cano,
-                "ACNT_PRDT_CD": CONFIG.kis_acnt_prdt_cd,
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
                 "AFHR_FLPR_YN": "N",
                 "OFL_YN": "",
                 "INQR_DVSN": "02",

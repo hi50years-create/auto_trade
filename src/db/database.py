@@ -20,7 +20,19 @@ def init_db():
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+        _migrate_add_market_column(conn)
     log.info("DB 초기화 완료: %s", DB_FILE)
+
+
+def _migrate_add_market_column(conn: sqlite3.Connection):
+    """2026-09-21 미국 마켓 추가: 기존에 이미 데이터가 쌓인 VM DB는 schema.sql의
+    CREATE TABLE IF NOT EXISTS 로는 컬럼이 새로 안 생기므로(테이블이 이미 존재), 직접
+    ALTER TABLE로 추가한다. 이미 컬럼이 있으면(신규 설치) 조용히 건너뛴다."""
+    for table in ("trades", "watchlist", "daily_state"):
+        cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "market" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN market TEXT NOT NULL DEFAULT 'KR'")
+            log.info("DB 마이그레이션: %s 테이블에 market 컬럼 추가", table)
 
 
 @contextmanager
@@ -35,12 +47,15 @@ def _connect():
 
 
 # ---------------------------------------------------------------- trades
-def insert_trade_entry(stock_code: str, stock_name: str, entry_time: str, buy_price: float, qty: int, order_no: str) -> int:
+def insert_trade_entry(
+    stock_code: str, stock_name: str, entry_time: str, buy_price: float, qty: int, order_no: str,
+    market: str = "KR",
+) -> int:
     with _connect() as conn:
         cur = conn.execute(
-            """INSERT INTO trades (stock_code, stock_name, entry_time, buy_price, qty, order_no, trading_mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (stock_code, stock_name, entry_time, buy_price, qty, order_no, CONFIG.trading_mode),
+            """INSERT INTO trades (stock_code, stock_name, entry_time, buy_price, qty, order_no, trading_mode, market)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (stock_code, stock_name, entry_time, buy_price, qty, order_no, CONFIG.trading_mode, market),
         )
         return cur.lastrowid
 
@@ -53,11 +68,11 @@ def close_trade(trade_id: int, exit_time: str, sell_price: float, profit_pct: fl
         )
 
 
-def get_today_trades() -> list[sqlite3.Row]:
+def get_today_trades(market: str = "KR") -> list[sqlite3.Row]:
     today = date.today().isoformat()
     with _connect() as conn:
         return conn.execute(
-            "SELECT * FROM trades WHERE entry_time LIKE ? ORDER BY id", (f"{today}%",)
+            "SELECT * FROM trades WHERE entry_time LIKE ? AND market=? ORDER BY id", (f"{today}%", market)
         ).fetchall()
 
 

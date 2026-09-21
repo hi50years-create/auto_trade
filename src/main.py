@@ -21,8 +21,10 @@ from src.db import database
 from src.news import naver_news
 from src.notify import telegram_bot
 from src.web.dashboard import create_app as create_web_app
+from src.strategy.breakout_pullback import BreakoutPullbackStrategy
 from src.strategy.risk_manager import SlotManager, check_gap_up, check_market_index
 from src.strategy.state_machine import StockWatcher, WatchContext
+from src.us_engine import USTradingEngine
 from src.utils import time_utils
 from src.utils.logger import get_logger
 
@@ -207,7 +209,7 @@ class TradingEngine:
 
     def _start_watcher(self, code: str, name: str, day_open: float, prev_close: float, cash: float):
         ctx = WatchContext(code=code, name=name, day_open_price=day_open, prev_close_price=prev_close)
-        watcher = StockWatcher(ctx, self.broker, self.slots, cash)
+        watcher = StockWatcher(ctx, self.broker, self.slots, cash, strategy=BreakoutPullbackStrategy())
         self.watchers[code] = watcher
         self.watcher_tasks[code] = asyncio.create_task(watcher.run())
 
@@ -344,10 +346,69 @@ class TradingEngine:
         return f"{stock_name} 강제 청산 완료."
 
 
+class CombinedEngine:
+    """국내(kr)/미국(us) 두 엔진을 텔레그램 명령 하나로 다루기 위한 얇은 라우팅 래퍼.
+    미국 엔진이 비활성화(US_MARKET_ENABLED=false)면 kr 로만 동작해 기존과 동일하다."""
+
+    def __init__(self, kr: TradingEngine, us: USTradingEngine | None):
+        self.kr = kr
+        self.us = us
+
+    async def get_status_text(self) -> str:
+        text = await self.kr.get_status_text()
+        if self.us is not None:
+            text += "\n\n" + await self.us.get_status_text()
+        return text
+
+    async def get_news_text(self, stock_name: str) -> str:
+        if self.us is not None and stock_name in self.us.name_to_code:
+            return await self.us.get_news_text(stock_name)
+        return await self.kr.get_news_text(stock_name)
+
+    async def get_supply_demand_text(self, stock_name: str) -> str:
+        if self.us is not None and stock_name in self.us.name_to_code:
+            return await self.us.get_supply_demand_text(stock_name)
+        return await self.kr.get_supply_demand_text(stock_name)
+
+    async def stop_all(self) -> str:
+        msg = await self.kr.stop_all()
+        if self.us is not None:
+            msg += "\n" + await self.us.stop_all()
+        return msg
+
+    async def re_screen(self) -> str:
+        msg = await self.kr.re_screen()
+        if self.us is not None:
+            msg += "\n" + await self.us.re_screen()
+        return msg
+
+    async def force_sell(self, stock_name: str) -> str:
+        if self.us is not None and stock_name in self.us.name_to_code:
+            return await self.us.force_sell(stock_name)
+        return await self.kr.force_sell(stock_name)
+
+
+def _try_start_us_engine() -> USTradingEngine | None:
+    """US_MARKET_ENABLED=true 이고 KIS_US_* 자격증명이 채워져 있을 때만 미국 엔진을 띄운다.
+    자격증명 문제 등으로 초기화가 실패해도 국내 파이프라인은 영향받지 않도록 여기서 막는다."""
+    if not CONFIG.us_market_enabled:
+        return None
+    if not (CONFIG.kis_us_app_key and CONFIG.kis_us_app_secret and CONFIG.kis_us_cano):
+        log.warning("US_MARKET_ENABLED=true 이지만 KIS_US_* 자격증명이 비어있어 미국 엔진을 건너뜁니다.")
+        return None
+    try:
+        return USTradingEngine()
+    except Exception:
+        log.exception("미국 엔진 초기화 실패 - 국내 파이프라인은 그대로 진행합니다.")
+        return None
+
+
 async def run():
     database.init_db()
     engine = TradingEngine()
-    app = telegram_bot.build_application(engine)
+    us_engine = _try_start_us_engine()
+    combined = CombinedEngine(engine, us_engine)
+    app = telegram_bot.build_application(combined)
 
     # misfire_grace_time: 기본값(1초)이면 프로세스가 그 순간 잠깐 바쁘거나(레이트리밋 재시도 등)
     # 절전에서 막 깨어난 직후처럼 스케줄러 루프가 정시에 못 돌면 "지나간 작업"으로 간주해
@@ -367,19 +428,28 @@ async def run():
     scheduler.add_job(engine.eod_snapshot_job, CronTrigger(
         hour=CONFIG.eod_snapshot_time.hour, minute=CONFIG.eod_snapshot_time.minute,
         second=CONFIG.eod_snapshot_time.second, day_of_week="mon-fri"))
+    if us_engine is not None:
+        # 뉴욕 로컬시각 기준으로 등록하면 서머타임(EDT/EST) 전환을 APScheduler가 자동으로 반영한다.
+        scheduler.add_job(us_engine.market_open_job, CronTrigger(
+            hour=9, minute=30, day_of_week="mon-fri", timezone="America/New_York"))
+        scheduler.add_job(us_engine.eod_reset_job, CronTrigger(
+            hour=16, minute=0, day_of_week="mon-fri", timezone="America/New_York"))
+        log.info("미국 모의투자 엔진 활성화됨")
     scheduler.start()
 
     web_server = None
     web_task = None
     if CONFIG.web_enabled:
-        web_app = create_web_app(engine)
+        web_app = create_web_app({"KR": engine, "US": us_engine})
         web_config = uvicorn.Config(web_app, host=CONFIG.web_host, port=CONFIG.web_port, log_level="warning")
         web_server = uvicorn.Server(web_config)
         web_task = asyncio.create_task(web_server.serve())
         log.info("웹 대시보드 기동: http://%s:%d", CONFIG.web_host, CONFIG.web_port)
 
-    log.info("트레이딩 봇 시작 (모드=%s)", CONFIG.trading_mode)
-    await telegram_bot.notify(f"✅ 트레이딩 봇이 시작되었습니다. (모드: {CONFIG.trading_mode.upper()})")
+    log.info("트레이딩 봇 시작 (모드=%s, 미국엔진=%s)", CONFIG.trading_mode, "ON" if us_engine else "OFF")
+    await telegram_bot.notify(
+        f"✅ 트레이딩 봇이 시작되었습니다. (모드: {CONFIG.trading_mode.upper()}, 미국모의: {'ON' if us_engine else 'OFF'})"
+    )
 
     async with app:
         await app.start()

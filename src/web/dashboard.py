@@ -114,6 +114,10 @@ _DASHBOARD_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
 body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f1115;color:#e6e6e6;margin:0;padding:1.5rem}}
 h1{{font-size:1.2rem;display:flex;justify-content:space-between;align-items:center;margin:0 0 1rem}}
 a{{color:#9ca3af;font-size:.85rem;text-decoration:none}}
+.tabs{{display:flex;gap:.5rem;margin-bottom:1rem}}
+.tab{{padding:.4rem .9rem;border-radius:8px;background:#1a1d24;color:#9ca3af;font-size:.85rem;cursor:pointer;border:1px solid transparent}}
+.tab.active{{background:#1f2937;color:#fff;border-color:#3b82f6}}
+.tab:disabled{{opacity:.4;cursor:not-allowed}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:1rem}}
 @media (max-width:800px){{.grid{{grid-template-columns:1fr}}}}
 .card{{background:#1a1d24;padding:1.2rem;border-radius:12px}}
@@ -129,6 +133,10 @@ th{{color:#9ca3af;font-weight:600}}
 .empty{{color:#6b7280;font-size:.85rem}}
 </style></head><body>
 <h1>📊 auto_trade 대시보드 <span><span class="badge" id="mode">{mode}</span> <a href="/logout">로그아웃</a></span></h1>
+<div class="tabs">
+  <button class="tab active" data-market="KR" onclick="switchMarket('KR')">🇰🇷 국내모의</button>
+  <button class="tab" data-market="US" id="tab-us" onclick="switchMarket('US')">🇺🇸 미국모의</button>
+</div>
 <div class="grid">
   <div class="card">
     <h2>시스템 상태</h2>
@@ -144,15 +152,30 @@ th{{color:#9ca3af;font-weight:600}}
   </div>
 </div>
 <script>
+let currentMarket = 'KR';
 function fmt(n) {{ return Math.round(n).toLocaleString('ko-KR'); }}
+function fmtCurrency(n) {{ return currentMarket === 'US' ? ('$' + n.toFixed(2)) : (fmt(n) + '원'); }}
+
+function switchMarket(m) {{
+  currentMarket = m;
+  document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.market === m));
+  refresh();
+}}
 
 async function refresh() {{
   try {{
-    const res = await fetch('/api/status');
+    const res = await fetch('/api/status?market=' + currentMarket);
     if (res.status === 401) {{ location.href = '/'; return; }}
+    if (res.status === 404) {{
+      document.getElementById('status').innerText = '미국 엔진이 비활성화 상태입니다 (US_MARKET_ENABLED=false 또는 자격증명 미설정).';
+      document.getElementById('cash').innerText = '-';
+      document.getElementById('holdings-body').innerHTML = '<tr><td colspan="5" class="empty">-</td></tr>';
+      document.getElementById('tab-us').disabled = true;
+      return;
+    }}
     const data = await res.json();
     document.getElementById('status').innerText = data.status_text;
-    document.getElementById('cash').innerText = fmt(data.cash_balance) + '원';
+    document.getElementById('cash').innerText = fmtCurrency(data.cash_balance);
 
     const body = document.getElementById('holdings-body');
     if (!data.holdings || data.holdings.length === 0) {{
@@ -161,8 +184,8 @@ async function refresh() {{
       body.innerHTML = data.holdings.map(h => {{
         const cls = h.eval_profit_pct >= 0 ? 'pos' : 'neg';
         const sign = h.eval_profit_pct >= 0 ? '+' : '';
-        return `<tr><td>${{h.name}}</td><td>${{h.qty}}</td><td>${{fmt(h.avg_price)}}</td>` +
-               `<td>${{fmt(h.current_price)}}</td><td class="${{cls}}">${{sign}}${{h.eval_profit_pct.toFixed(2)}}%</td></tr>`;
+        return `<tr><td>${{h.name}}</td><td>${{h.qty}}</td><td>${{fmtCurrency(h.avg_price)}}</td>` +
+               `<td>${{fmtCurrency(h.current_price)}}</td><td class="${{cls}}">${{sign}}${{h.eval_profit_pct.toFixed(2)}}%</td></tr>`;
       }}).join('');
     }}
   }} catch (e) {{ /* 네트워크 일시 오류 무시, 다음 주기에 재시도 */ }}
@@ -173,7 +196,8 @@ setInterval(refresh, 20000);
 </body></html>"""
 
 
-def create_app(engine) -> FastAPI:
+def create_app(engines: dict) -> FastAPI:
+    """engines: {"KR": TradingEngine, "US": USTradingEngine | None}"""
     app = FastAPI(title="auto_trade dashboard", docs_url=None, redoc_url=None)
 
     @app.get("/", response_class=HTMLResponse)
@@ -237,11 +261,14 @@ def create_app(engine) -> FastAPI:
         return HTMLResponse(_DASHBOARD_HTML.format(mode=CONFIG.trading_mode.upper()))
 
     @app.get("/api/status")
-    async def api_status(request: Request):
+    async def api_status(request: Request, market: str = "KR"):
         if not _is_authed(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        text = await engine.get_status_text()
-        account = await engine.get_account_info()
+        target = engines.get(market)
+        if target is None:
+            return JSONResponse({"error": f"market '{market}' is not enabled"}, status_code=404)
+        text = await target.get_status_text()
+        account = await target.get_account_info()
         return JSONResponse({
             "status_text": text,
             "cash_balance": account["cash_balance"],

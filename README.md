@@ -37,12 +37,41 @@ auto_trade/
 │   ├── data/screener.py           # 08:30~08:50 장전 스크리닝
 │   ├── news/naver_news.py         # Naver 뉴스 검색
 │   ├── ai/gemini_sentiment.py     # Gemini Free Tier 감성분석 (4.5초 쓰로틀)
-│   ├── strategy/state_machine.py  # 종목별 실시간 매매 상태머신
+│   ├── strategy/state_machine.py  # 종목별 실시간 매매 상태머신 (공통 배관 - 슬롯/주문/DB/알림)
+│   ├── strategy/plugin_base.py    # Strategy 인터페이스 (진입/청산 판정만 분리)
+│   ├── strategy/breakout_pullback.py  # 전략: 시가돌파 + 저점반등 (국내 기본)
+│   ├── strategy/golden_cross.py   # 전략: 이동평균 골든크로스 (미국 기본)
 │   ├── strategy/risk_manager.py   # 슬롯/지수/시간 필터
+│   ├── broker/kis_client.py       # KIS REST + WebSocket 클라이언트 (국내)
+│   ├── broker/kis_overseas_client.py  # KIS 해외주식 클라이언트 (미국)
+│   ├── us_engine.py               # 미국 모의투자 엔진 (정적 관심종목 + 골든크로스)
+│   ├── utils/time_utils.py        # 국내 장중 시간 판정
+│   ├── utils/us_time_utils.py     # 미국 장중 시간 판정 (서머타임 자동반영)
+│   ├── data/screener.py           # 08:30~08:50 장전 스크리닝 (국내)
+│   ├── news/naver_news.py         # Naver 뉴스 검색
+│   ├── ai/gemini_sentiment.py     # Gemini Free Tier 감성분석 (4.5초 쓰로틀)
 │   ├── notify/telegram_bot.py     # 텔레그램 알림 + 원격명령
 │   └── db/                        # SQLite 스키마/DAO
 └── morning_breakout_backtest-v10.py  # (원본 백테스트, 참고용 보존)
 ```
+
+### 전략 플러그인 / 미국 모의투자 (2026-09-21 추가)
+
+진입/청산 판정 로직은 `Strategy` 인터페이스(`src/strategy/plugin_base.py`)로 분리되어 있어
+`StockWatcher`에 새 전략을 주입하기만 하면 된다. 국내는 기존 `BreakoutPullbackStrategy`를
+그대로 쓰고, 미국은 체결강도/호가잔량비 같은 국내 전용 실시간 수급 데이터 없이도 동작하는
+`GoldenCrossStrategy`를 기본으로 쓴다. 새 전략을 추가하려면 `Strategy`만 구현하면 된다.
+
+미국 모의투자를 켜려면:
+1. KIS 개발자센터에서 **해외주식 모의투자**를 별도 신청 (국내와 무관한 별도 앱키/계좌 발급)
+2. `.env`에 `US_MARKET_ENABLED=true` + `KIS_US_APP_KEY`/`KIS_US_APP_SECRET`/`KIS_US_CANO` 입력
+3. `cp config/watchlist_us.txt.example config/watchlist_us.txt` 후 감시할 티커 입력
+   (1차는 자동 스크리닝 없이 이 목록만 씀)
+
+미국 엔진은 국내와 완전히 독립적으로 동작하며(별도 계좌/슬롯/스케줄), 자격증명이 비어있으면
+자동으로 비활성화되고 국내 파이프라인만 기존과 동일하게 돈다. 뉴욕 정규장(09:30~11:00 ET
+진입창, 16:00 ET 마감)을 `zoneinfo`로 계산해 서머타임을 자동 반영한다. 지수폭락 필터·시가갭
+필터·뉴스감성분석은 1차 범위에 없다.
 
 ## 1. 로컬 준비
 
