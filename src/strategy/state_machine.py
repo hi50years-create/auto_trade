@@ -22,7 +22,7 @@ from src.notify import telegram_bot
 from src.strategy.risk_manager import SlotManager, is_entry_allowed_now, is_exit_monitoring_active
 from src.utils import time_utils
 from src.utils.logger import get_logger
-from src.utils.tick import round_up_ticks
+from src.utils.tick import round_up_ticks, snap_up_to_tick
 
 log = get_logger("state_machine")
 
@@ -289,7 +289,7 @@ class StockWatcher:
             await self._exit(rt_price, "장마감 동시청산")
             return
         if rt_price >= tp_price:
-            await self._exit(tp_price, "익절 (Target)")
+            await self._exit(tp_price, "익절 (Target)", prefer_limit=True)
             return
         if rt_price <= sl_price:
             await self._exit(sl_price, "손절 (Stop Loss)")
@@ -305,9 +305,34 @@ class StockWatcher:
             await self._exit(self.ctx.day_open_price, "실시간 시가 이탈 손절")
             return
 
-    async def _exit(self, exit_price: float, reason: str):
-        order = await asyncio.to_thread(self.broker.sell_market, self.ctx.code, self.qty)
-        actual_price = exit_price  # 시장가 체결가는 체결통보/잔고조회로 사후 보정 가능 (여기서는 판정가 기준 기록)
+    async def _exit(self, exit_price: float, reason: str, prefer_limit: bool = False):
+        remaining_qty = self.qty
+        order = None
+
+        if prefer_limit:
+            # 3.4절: 익절은 시장가가 아니라 지정가로 나가야 계산된 목표수익률 미만으로 체결되는
+            # 슬리피지를 막을 수 있다. 단, 지정가가 하필 안 채워지는 사이 반등분이 꺼지면 이익을
+            # 통째로 놓칠 수 있으므로 매수 진입과 동일한 패턴(15초 미체결시 자동취소)으로 재시도하고,
+            # 그래도 남은 수량은 시장가로 전환해 반드시 청산한다.
+            limit_price = snap_up_to_tick(exit_price)
+            limit_order = await asyncio.to_thread(self.broker.sell_limit, self.ctx.code, remaining_qty, limit_price)
+            if limit_order.success:
+                filled_qty = await self._await_fill_or_cancel(limit_order.order_no, self.ctx.code, remaining_qty)
+                if filled_qty > 0:
+                    order = limit_order
+                    remaining_qty -= filled_qty
+            else:
+                log.warning("[%s] 익절 지정가 주문 실패, 시장가로 전환: %s", self.ctx.name, limit_order.message)
+
+        if remaining_qty > 0:
+            if order is not None:
+                log.info("[%s] 익절 지정가 부분체결(%d/%d주) - 잔여 %d주 시장가 전환 청산",
+                         self.ctx.name, self.qty - remaining_qty, self.qty, remaining_qty)
+            order = await asyncio.to_thread(self.broker.sell_market, self.ctx.code, remaining_qty)
+
+        # 체결가는 지정가/시장가 혼합이어도 판정가 기준으로 단순화해 기록한다 (시장가 실제 체결가는
+        # 체결통보/잔고조회로 사후 보정 가능 - 기존과 동일한 단순화).
+        actual_price = exit_price
         profit_pct = ((actual_price - self.buy_price) / self.buy_price) * 100
 
         exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -46,6 +46,10 @@ class BrokerBase(ABC):
         ...
 
     @abstractmethod
+    def sell_limit(self, code: str, qty: int, price: int) -> OrderResult:
+        ...
+
+    @abstractmethod
     def cancel_order(self, order_no: str, code: str, qty: int) -> OrderResult:
         ...
 

@@ -406,6 +406,10 @@ class KISClient(BrokerBase):
         # 시장가 매도: ORD_DVSN "01", ORD_UNPR "0"
         return self._place_order(code, qty, price=0, is_buy=False, ord_dvsn="01")
 
+    def sell_limit(self, code: str, qty: int, price: int) -> OrderResult:
+        # 지정가 매도: ORD_DVSN "00" (3.4절 익절 - 목표가 미만 체결 방지)
+        return self._place_order(code, qty, price, is_buy=False, ord_dvsn="00")
+
     def _place_order(self, code: str, qty: int, price: int, is_buy: bool, ord_dvsn: str = "00") -> OrderResult:
         tr_id = (TR_ORDER_BUY if is_buy else TR_ORDER_SELL)[self.env_dv]
         body = {

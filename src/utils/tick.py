@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+import math
+
 _TICK_TABLE = [
     (2_000, 1),
     (5_000, 5),
@@ -30,3 +32,10 @@ def round_up_ticks(price: float, n_ticks: int = 2) -> int:
     # 최종가를 해당 구간 tick 배수로 정렬
     tick = get_tick_size(p)
     return int(round(p / tick) * tick)
+
+
+def snap_up_to_tick(price: float) -> int:
+    """가격을 해당 구간 호가단위의 배수로 올림한다. 익절 지정가 매도 시 목표수익률 미만으로
+    체결되지 않도록(계산된 목표가 이상만 인정) 내림이 아닌 올림을 쓴다."""
+    tick = get_tick_size(price)
+    return int(math.ceil(price / tick) * tick)
