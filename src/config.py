@@ -63,6 +63,10 @@ class Config:
     kis_us_cano: str = field(default_factory=lambda: _get_str("KIS_US_CANO", ""))
     kis_us_acnt_prdt_cd: str = field(default_factory=lambda: _get_str("KIS_US_ACNT_PRDT_CD", "01"))
     us_market_enabled: bool = field(default_factory=lambda: _get_str("US_MARKET_ENABLED", "false").lower() == "true")
+    # 골든크로스 이동평균 봉 수. 기본 5/20(3분봉 기준 60분 웜업)이지만, 진입창이 짧을 때
+    # (v1 기본 09:30~11:00 ET, 90분) 웜업이 너무 길면 신호 낼 기회 자체가 줄어든다.
+    us_golden_cross_short_window: int = field(default_factory=lambda: _get_int("US_GOLDEN_CROSS_SHORT_WINDOW", 5))
+    us_golden_cross_long_window: int = field(default_factory=lambda: _get_int("US_GOLDEN_CROSS_LONG_WINDOW", 20))
 
     # Naver
     naver_client_id: str = field(default_factory=lambda: _get_str("NAVER_CLIENT_ID", ""))

@@ -85,7 +85,9 @@ class USTradingEngine:
 
     def _start_watcher(self, code: str, name: str, day_open: float, cash: float):
         ctx = WatchContext(code=code, name=name, day_open_price=day_open, prev_close_price=0.0)
-        strategy = GoldenCrossStrategy()
+        strategy = GoldenCrossStrategy(
+            short_window=CONFIG.us_golden_cross_short_window, long_window=CONFIG.us_golden_cross_long_window,
+        )
         watcher = StockWatcher(
             ctx, self.broker, self.slots, cash, strategy=strategy,
             market_tag="US", market_emoji="🇺🇸", currency="USD",
