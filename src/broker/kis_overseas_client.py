@@ -122,10 +122,15 @@ class KISOverseasClient(KISClient):
 
     def _place_overseas_order(self, code: str, qty: int, price, is_buy: bool) -> OrderResult:
         tr_id = (TR_OVRS_ORDER_BUY if is_buy else TR_OVRS_ORDER_SELL)[self.env_dv]
+        # 2026-09-21 실측: 공식 예제(order.py) 원본을 전부 받아보니 SLL_TYPE/CTAC_TLNO/
+        # MGCO_APTM_ODNO 가 다 params에 들어있었는데 여기선 빠져있었다 - 특히 SLL_TYPE 누락이
+        # "모의투자 주문가능금액이 부족합니다"(40250000) 오판정의 원인으로 의심됨. 매수는
+        # SLL_TYPE="" (빈 문자열도 명시적으로 보냄), 매도는 "00" (국내 "01"과 다름 - 헷갈리지 말 것).
         body = {
             "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
             "OVRS_EXCG_CD": self.default_exchange, "PDNO": code,
             "ORD_QTY": str(qty), "OVRS_ORD_UNPR": f"{usd_round(price):.2f}",
+            "CTAC_TLNO": "", "MGCO_APTM_ODNO": "", "SLL_TYPE": "" if is_buy else "00",
             "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": "00",
         }
         data = self._post("/uapi/overseas-stock/v1/trading/order", tr_id, body)
