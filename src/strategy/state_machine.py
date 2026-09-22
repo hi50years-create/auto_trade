@@ -27,7 +27,7 @@ from src.strategy.plugin_base import Strategy
 from src.strategy.risk_manager import SlotManager
 from src.utils import time_utils
 from src.utils.logger import get_logger
-from src.utils.tick import round_up_ticks, snap_up_to_tick
+from src.utils.tick import round_up_ticks, snap_up_to_tick, usd_round
 
 log = get_logger("state_machine")
 
@@ -83,6 +83,20 @@ class StockWatcher:
 
     def _fmt(self, price: float) -> str:
         return f"${price:,.2f}" if self.currency == "USD" else f"{price:,.0f}원"
+
+    def _round_up_entry(self, price: float) -> float:
+        """슬리피지 방지용 매수 지정가 (기준가보다 살짝 높게). 통화별로 다르게 계산해야 한다 -
+        2026-09-22 실측: USD 가격에 KRX 계단 호가단위(round_up_ticks)를 그대로 썼더니 소수점
+        (센트)이 통째로 날아가 정수 달러로 반올림되는 문제가 있었다."""
+        if self.currency == "USD":
+            return usd_round(price + 0.02)
+        return round_up_ticks(price, n_ticks=2)
+
+    def _round_up_exit(self, price: float) -> float:
+        """익절 지정가 (목표가 이상만 인정). 통화별 분기는 _round_up_entry와 동일한 이유."""
+        if self.currency == "USD":
+            return usd_round(price)
+        return snap_up_to_tick(price)
 
     @staticmethod
     def _current_bar_bucket() -> str:
@@ -207,12 +221,26 @@ class StockWatcher:
         await self._execute_entry(signal_price=signal_price)
 
     async def _execute_entry(self, signal_price: float):
-        limit_price = round_up_ticks(signal_price, n_ticks=2)
+        limit_price = self._round_up_entry(signal_price)
         alloc_amount = self.slots.allocation_amount(self.total_cash)
         qty = int(alloc_amount // limit_price)
         if qty <= 0:
             log.warning("[%s] 배분자금 부족으로 주문 스킵 (배분액=%.0f, 주문가=%s)", self.ctx.name, alloc_amount, limit_price)
             return
+
+        # 2026-09-22 실측: 해외 통합증거금 계좌는 예수금 조회값이 신뢰하기 어려워(원화/달러
+        # 단위 착오로 21만주 매수 시도가 나간 적 있음), 브로커가 지원하면 실제 매수가능수량으로
+        # 한 번 더 상한을 건다 (get_max_buyable_qty 없는 브로커는 조용히 건너뜀).
+        cap = getattr(self.broker, "get_max_buyable_qty", None)
+        if cap is not None:
+            max_qty = await asyncio.to_thread(cap, self.ctx.code, limit_price)
+            if max_qty is not None and max_qty < qty:
+                log.warning("[%s] 배분 기준 수량(%d)이 실제 매수가능수량(%d) 초과 - 상한으로 축소",
+                            self.ctx.name, qty, max_qty)
+                qty = max_qty
+            if qty <= 0:
+                log.warning("[%s] 실제 매수가능수량이 0 - 주문 스킵", self.ctx.name)
+                return
 
         order = await asyncio.to_thread(self.broker.buy_limit, self.ctx.code, qty, limit_price)
         if not order.success:
@@ -295,7 +323,7 @@ class StockWatcher:
             # 슬리피지를 막을 수 있다. 단, 지정가가 하필 안 채워지는 사이 반등분이 꺼지면 이익을
             # 통째로 놓칠 수 있으므로 매수 진입과 동일한 패턴(15초 미체결시 자동취소)으로 재시도하고,
             # 그래도 남은 수량은 시장가로 전환해 반드시 청산한다.
-            limit_price = snap_up_to_tick(exit_price)
+            limit_price = self._round_up_exit(exit_price)
             limit_order = await asyncio.to_thread(self.broker.sell_limit, self.ctx.code, remaining_qty, limit_price)
             if limit_order.success:
                 filled_qty = await self._await_fill_or_cancel(limit_order.order_no, self.ctx.code, remaining_qty)

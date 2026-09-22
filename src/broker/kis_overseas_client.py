@@ -31,7 +31,8 @@ TR_OVRS_ORDER_SELL = {"real": "TTTT1006U", "demo": "VTTT1001U"}
 TR_OVRS_ORDER_CANCEL = {"real": "TTTT1004U", "demo": "VTTT1004U"}
 TR_OVRS_NCCS = "TTTS3018R"          # 미체결내역조회 (실전/모의 공통)
 TR_OVRS_BALANCE = {"real": "TTTS3012R", "demo": "VTTS3012R"}  # 해외주식 잔고조회 (보유종목용)
-TR_OVRS_PRESENT_BALANCE = {"real": "CTRP6504R", "demo": "VTRP6504R"}  # 해외주식 체결기준현재잔고 (예수금용)
+TR_OVRS_PRESENT_BALANCE = {"real": "CTRP6504R", "demo": "VTRP6504R"}  # 해외주식 체결기준현재잔고 (표시용, 통합증거금 계좌에선 신뢰 불가 - 아래 주석 참고)
+TR_OVRS_PSAMOUNT = {"real": "TTTS3007R", "demo": "VTTS3007R"}  # 해외주식 매수가능금액조회 (실제 주문가능 달러 - 예수금/수량 계산은 반드시 이걸로)
 TR_OVRS_CURRENT_PRICE = "HHDFS00000300"     # 해외주식 현재가 (실전/모의 공통)
 TR_OVRS_DAILY_CHART = "HHDFS76240000"       # 해외주식 기간별시세(일봉)
 TR_OVRS_MINUTE_CHART = "HHDFS76950200"      # 해외주식 분봉조회
@@ -200,26 +201,49 @@ class KISOverseasClient(KISClient):
             except (KeyError, TypeError, ValueError):
                 continue
 
-        # 예수금은 위 잔고조회(inquire-balance)가 아니라 별도 엔드포인트(체결기준현재잔고)의
-        # output3(딕셔너리 하나, 리스트 아님)에 들어있다 - 2026-09-21 실측으로 확인.
-        # 통합증거금 계좌는 통화별 "사용가능금액"(frcr_use_psbl_amt)이 실거래 전까지 0으로 찍히고,
-        # 대신 "총자산금액"(tot_asst_amt, 원화환산)에 배정된 고정한도가 반영된다 - 화면엔 이걸 쓴다.
-        cash = 0.0
+        # 2026-09-22 실측: inquire-present-balance(체결기준현재잔고)의 필드들은 통합증거금
+        # 계좌에서 실제 주문가능 달러를 신뢰성 있게 반영하지 않는다 - frcr_use_psbl_amt는
+        # 실거래 후에도 계속 0으로 찍혔고, tot_asst_amt(총자산금액)는 원화 환산값이라 이걸
+        # "달러 예수금"으로 잘못 썼다가 슬롯 배분액을 달러로 착각해 매수량이 21만주까지
+        # 계산되는 사고가 났다(마이크로소프트 매수 시도, 실패로 끝났지만). 실제 주문가능
+        # 달러는 매수가능금액조회(inquire-psamount)의 ord_psbl_frcr_amt 가 맞다 - 종목별
+        # API라 임의의 유동성 큰 종목(AAPL)으로 조회해 계좌 단위 가용 달러를 얻는다.
+        cash = self._get_usable_usd_cash()
+        return {"cash_balance": cash, "holdings": holdings}
+
+    def _get_usable_usd_cash(self, reference_code: str = "AAPL") -> float:
         try:
-            bal_data = self._get(
-                "/uapi/overseas-stock/v1/trading/inquire-present-balance", TR_OVRS_PRESENT_BALANCE[self.env_dv],
+            price = self.get_current_price(reference_code)
+            if not price:
+                return 0.0
+            data = self._get(
+                "/uapi/overseas-stock/v1/trading/inquire-psamount", TR_OVRS_PSAMOUNT[self.env_dv],
                 {
                     "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
-                    "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "00",
+                    "OVRS_EXCG_CD": self.default_exchange, "OVRS_ORD_UNPR": f"{usd_round(price):.2f}",
+                    "ITEM_CD": reference_code,
                 },
             )
-            output3 = bal_data.get("output3", {})
-            frcr_usable = float(output3.get("frcr_use_psbl_amt", 0))
-            cash = frcr_usable if frcr_usable > 0 else float(output3.get("tot_asst_amt", 0))
+            return float(data.get("output", {}).get("ord_psbl_frcr_amt", 0))
         except Exception:
-            log.exception("해외 예수금 조회 실패")
+            log.exception("해외 주문가능금액 조회 실패")
+            return 0.0
 
-        return {"cash_balance": cash, "holdings": holdings}
+    def get_max_buyable_qty(self, code: str, price: float) -> int | None:
+        """해당 종목/가격 기준 실제 매수 가능한 최대 수량. 조회 실패 시 None(체크 생략)."""
+        try:
+            data = self._get(
+                "/uapi/overseas-stock/v1/trading/inquire-psamount", TR_OVRS_PSAMOUNT[self.env_dv],
+                {
+                    "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                    "OVRS_EXCG_CD": self.default_exchange, "OVRS_ORD_UNPR": f"{usd_round(price):.2f}",
+                    "ITEM_CD": code,
+                },
+            )
+            return int(float(data.get("output", {}).get("max_ord_psbl_qty", 0)))
+        except Exception:
+            log.exception("[%s] 매수가능수량 조회 실패 - 수량 상한 체크 생략", code)
+            return None
 
     # ------------------------------------------------------------ 실시간 (v1: 미지원, REST 폴백)
     def subscribe_realtime(self, codes: list[str], on_tick: Optional[Callable[[str, dict], None]]) -> None:
