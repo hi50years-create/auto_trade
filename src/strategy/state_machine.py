@@ -71,6 +71,7 @@ class StockWatcher:
         self.entry_time: str | None = None
         self.trade_id: int | None = None
         self._last_bar_time: str | None = None
+        self._watch_started_at: str | None = None  # WAIT_FOR_BREAKOUT 진입 시각(3분봉 버킷)
         self._stop_requested = False
 
         # 진입 경로 기록 (POSITION_HOLDING 청산 로직 분기에 사용).
@@ -82,6 +83,14 @@ class StockWatcher:
 
     def _fmt(self, price: float) -> str:
         return f"${price:,.2f}" if self.currency == "USD" else f"{price:,.0f}원"
+
+    @staticmethod
+    def _current_bar_bucket() -> str:
+        """지금 이 순간이 속한 3분봉의 시작 시각("HH:MM")을 반환한다 (kis_client._resample_3min
+        의 버킷팅 규칙과 동일하게 자정 기준 총 분을 3분 단위로 내림)."""
+        now = datetime.now()
+        bucket = (now.hour * 60 + now.minute) // 3 * 3
+        return f"{bucket // 60:02d}:{bucket % 60:02d}"
 
     async def run(self):
         log.info("[%s] 감시 시작 (시가=%s)", self.ctx.name, self.ctx.day_open_price)
@@ -118,6 +127,7 @@ class StockWatcher:
     async def _tick_idle(self):
         if not self.strategy.requires_dip_below_open:
             self.state = "WAIT_FOR_BREAKOUT"
+            self._watch_started_at = self._current_bar_bucket()
             log.info("[%s] 감시 개시 (전략이 시가 이탈 전제조건 불필요)", self.ctx.name)
             return
 
@@ -125,6 +135,7 @@ class StockWatcher:
         rt_price = snap.get("price") or await asyncio.to_thread(self.broker.get_current_price, self.ctx.code)
         if rt_price and rt_price < self.ctx.day_open_price:
             self.state = "WAIT_FOR_BREAKOUT"
+            self._watch_started_at = self._current_bar_bucket()
             log.info("[%s] 시가 이탈 확인 (개미털기 구간 진입) 현재가=%s", self.ctx.name, rt_price)
 
     # ------------------------------------------------------------ WAIT_FOR_BREAKOUT
@@ -137,11 +148,17 @@ class StockWatcher:
         # 예전엔 그중 df.iloc[-1](가장 최신 봉) 하나만 보고 나머지는 버렸다. KIS 모의투자 서버가
         # 빈번히 일시적 오류/연결끊김을 내는 걸 감안하면, 한 번의 폴링 실패로 3분봉 하나가 통째로
         # 누락될 수 있는데 - 저점반등 판정은 "신저가+양봉" -> "확인봉" 2개 봉이 연속으로 필요해서
-        # 봉 하나만 스킵돼도 패턴이 통째로 깨진다. 당일 실거래에서 오프라인 재현으로는 6/7종목에서
-        # 신호가 나왔어야 했는데 실제 로그엔 0건이었던 게 이 버그로 설명된다. 마지막 처리 시각
-        # 이후의 봉을 전부 순서대로 처리하도록 고친다.
+        # 봉 하나만 스킵돼도 패턴이 통째로 깨진다. 마지막 처리 시각 이후의 봉을 전부 순서대로
+        # 처리하도록 고쳤었다.
+        #
+        # 2026-09-22 실측: 그런데도 "첫 성공 폴링"에서는 여전히 df.iloc[-1] 하나만 보고 있었다.
+        # 감시 시작(WAIT_FOR_BREAKOUT 진입) 직후 몇 번의 폴링이 연달아 실패하면(오늘 09:00~09:02
+        # 사이에만 여러 번 발생), "첫 성공 폴링" 시점엔 이미 몇 분이 지나있어서 그 사이의 진짜
+        # 신호 봉(예: 09:00봉)이 "가장 최신 봉"이 아니게 되어 영구히 누락됐다 - 6종목 중 5종목이
+        # 이 이유로 신호를 놓친 게 오프라인 재현으로 확인됨. "첫 성공 폴링"이 아니라 "감시 시작
+        # 이후"를 기준으로 삼아야 한다.
         if self._last_bar_time is None:
-            unprocessed = df.iloc[[-1]]
+            unprocessed = df[df["time"] >= self._watch_started_at] if self._watch_started_at else df.iloc[[-1]]
         else:
             unprocessed = df[df["time"] > self._last_bar_time]
         if unprocessed.empty:
