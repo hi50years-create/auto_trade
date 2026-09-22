@@ -355,10 +355,10 @@ class CombinedEngine:
         self.us = us
 
     async def get_status_text(self) -> str:
-        text = await self.kr.get_status_text()
-        if self.us is not None:
-            text += "\n\n" + await self.us.get_status_text()
-        return text
+        if self.us is None:
+            return await self.kr.get_status_text()
+        kr_text, us_text = await asyncio.gather(self.kr.get_status_text(), self.us.get_status_text())
+        return f"{kr_text}\n\n{us_text}"
 
     async def get_news_text(self, stock_name: str) -> str:
         if self.us is not None and stock_name in self.us.name_to_code:
@@ -371,16 +371,20 @@ class CombinedEngine:
         return await self.kr.get_supply_demand_text(stock_name)
 
     async def stop_all(self) -> str:
-        msg = await self.kr.stop_all()
-        if self.us is not None:
-            msg += "\n" + await self.us.stop_all()
-        return msg
+        # 긴급 정지는 한쪽이 지연되더라도 다른 쪽을 절대 기다리게 하면 안 되므로 반드시 동시 실행.
+        if self.us is None:
+            return await self.kr.stop_all()
+        kr_msg, us_msg = await asyncio.gather(self.kr.stop_all(), self.us.stop_all())
+        return f"{kr_msg}\n{us_msg}"
 
     async def re_screen(self) -> str:
-        msg = await self.kr.re_screen()
-        if self.us is not None:
-            msg += "\n" + await self.us.re_screen()
-        return msg
+        # 2026-09-22 실측: 순차 await(국내 먼저)로 짰더니, 밤에 미국만 재스크리닝하고 싶어도
+        # 국내 pre_screen_job(뉴스검색+Gemini 감성분석, 장중에도 아닌데 몇 분씩 걸림)이 끝날
+        # 때까지 미국 쪽이 아예 시작도 못 하는 문제가 있었다. 동시 실행으로 변경.
+        if self.us is None:
+            return await self.kr.re_screen()
+        kr_msg, us_msg = await asyncio.gather(self.kr.re_screen(), self.us.re_screen())
+        return f"{kr_msg}\n{us_msg}"
 
     async def force_sell(self, stock_name: str) -> str:
         if self.us is not None and stock_name in self.us.name_to_code:
