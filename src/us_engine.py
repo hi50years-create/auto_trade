@@ -48,6 +48,9 @@ class USTradingEngine:
         self.watcher_tasks: dict[str, asyncio.Task] = {}
         self.name_to_code: dict[str, str] = {}
         self.emergency_stopped = False
+        # 개장 시점(보통 22:30~23:30 KST)의 날짜를 따로 저장해둔다. 마감 리포트는 자정을 넘긴
+        # 새벽에 실행되는데, 그때 date.today()를 쓰면 진입이 찍힌 "어제 날짜" 거래를 못 찾는다.
+        self._session_date: str | None = None
 
     async def market_open_job(self):
         if self.emergency_stopped:
@@ -58,6 +61,7 @@ class USTradingEngine:
             return
 
         today = date.today().isoformat()
+        self._session_date = today
         cash = await asyncio.to_thread(self.broker.get_cash_balance)
         active = []
         for cand in candidates:
@@ -102,7 +106,7 @@ class USTradingEngine:
             if not task.done():
                 await asyncio.wait([task], timeout=30)
 
-        trades = database.get_today_trades(market="US")
+        trades = database.get_today_trades(market="US", trade_date=self._session_date)
         closed = [t for t in trades if t["result"]]
         if closed:
             win = sum(1 for t in closed if (t["profit_pct"] or 0) > 0)

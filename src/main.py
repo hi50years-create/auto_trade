@@ -176,19 +176,28 @@ class TradingEngine:
             code, name = cand["code"], cand["name"]
             if code in self.watchers:
                 continue  # 이미 감시 중인 종목은 중복 처리하지 않음
-            day_open = await asyncio.to_thread(self._get_confirmed_open_price, code)
-            prev_close = cand["daily_info"]["prev_close"]
-            if not day_open or not prev_close:
-                continue
-            gap_ok, gap_pct = check_gap_up(day_open, prev_close)
-            database.upsert_watchlist(today, code, day_open_price=day_open, gap_up_pct=gap_pct,
-                                       state="ACTIVE" if gap_ok else "CLOSED")
-            if not gap_ok:
-                await telegram_bot.notify(f"❌ [09:00] {name} 시가 갭 스크리닝 제외 (갭 {gap_pct:.2f}% > {CONFIG.gap_up_max_pct}%)")
-                continue
+            try:
+                # 2026-09-23 실측: 이 블록에 종목별 예외처리가 없어서, 한 종목(노타)의 시가
+                # 조회 중 KIS 연결이 순간 끊기자(RemoteDisconnected) 함수 전체가 죽어버렸다.
+                # 그 종목 이후 후보는 물론, 루프 끝의 "감시 개시" 요약 알림까지 통째로 날아갔다
+                # (앞서 처리된 3종목은 이미 감시가 시작된 상태라 남아있었음). 종목 하나의 일시적
+                # 오류가 나머지 전체를 막지 않도록 감싼다.
+                day_open = await asyncio.to_thread(self._get_confirmed_open_price, code)
+                prev_close = cand["daily_info"]["prev_close"]
+                if not day_open or not prev_close:
+                    log.warning("[%s] 09:00 시가/전일종가 조회 실패 - 감시 제외", name)
+                    continue
+                gap_ok, gap_pct = check_gap_up(day_open, prev_close)
+                database.upsert_watchlist(today, code, day_open_price=day_open, gap_up_pct=gap_pct,
+                                           state="ACTIVE" if gap_ok else "CLOSED")
+                if not gap_ok:
+                    await telegram_bot.notify(f"❌ [09:00] {name} 시가 갭 스크리닝 제외 (갭 {gap_pct:.2f}% > {CONFIG.gap_up_max_pct}%)")
+                    continue
 
-            active_codes.append(code)
-            self._start_watcher(code, name, day_open, prev_close, cash)
+                active_codes.append(code)
+                self._start_watcher(code, name, day_open, prev_close, cash)
+            except Exception:
+                log.exception("[%s] 09:00 감시 개시 처리 중 오류 (일시적 오류로 간주, 다음 종목 계속)", name)
 
         if active_codes:
             await asyncio.to_thread(self.broker.subscribe_realtime, active_codes, None)

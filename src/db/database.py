@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.config import CONFIG, PROJECT_ROOT
@@ -68,11 +68,19 @@ def close_trade(trade_id: int, exit_time: str, sell_price: float, profit_pct: fl
         )
 
 
-def get_today_trades(market: str = "KR") -> list[sqlite3.Row]:
-    today = date.today().isoformat()
+def get_today_trades(market: str = "KR", trade_date: str | None = None) -> list[sqlite3.Row]:
+    # trade_date 를 명시적으로 받을 수 있게 한 이유: 미국장은 한국시간 자정을 걸쳐서 열려서
+    # (예: 22:30 개장 ~ 익일 05:00 마감, 진입창 자체도 자정을 넘길 수 있음), 마감 직후(새벽)
+    # date.today()를 그대로 쓰면 진입이 "어제 날짜" 혹은 "오늘 날짜" 둘 중 하나로 찍힌 실제
+    # 체결 거래를 놓친다 (2026-09-23 실측: NVDA 거래를 "당일 체결된 거래가 없습니다"로 오보고함).
+    # 세션 시작일 00:00 ~ 그 다음날 끝까지(자정을 넘긴 진입 포함) 범위로 조회한다.
+    d = trade_date or date.today().isoformat()
+    start = f"{d} 00:00:00"
+    end = f"{(date.fromisoformat(d) + timedelta(days=2)).isoformat()} 00:00:00"
     with _connect() as conn:
         return conn.execute(
-            "SELECT * FROM trades WHERE entry_time LIKE ? AND market=? ORDER BY id", (f"{today}%", market)
+            "SELECT * FROM trades WHERE entry_time >= ? AND entry_time < ? AND market=? ORDER BY id",
+            (start, end, market),
         ).fetchall()
 
 
