@@ -47,6 +47,9 @@ class TradingEngine:
     async def pre_screen_job(self):
         if self.emergency_stopped:
             return
+        if not time_utils.is_trading_day():
+            log.info("[08:50] 오늘은 휴장일/주말 - 스크리닝 건너뜀")
+            return
         today = date.today().isoformat()
         log.info("[08:50] 장 시작 전 예비 스크리닝 시작")
 
@@ -206,6 +209,9 @@ class TradingEngine:
     async def market_open_job(self):
         if self.emergency_stopped:
             return
+        if not time_utils.is_trading_day():
+            log.info("[09:00] 오늘은 휴장일/주말 - 감시 개시 건너뜀")
+            return
         if not await self._ensure_index_checked():
             return
         await self._activate_candidates()
@@ -253,6 +259,9 @@ class TradingEngine:
     async def eod_snapshot_job(self):
         """장마감 직후, 09:00 타이밍 압박 없이 여유있게 오늘의 상한가/신고가 종목을 확정해 DB에
         저장한다. 다음 거래일 08:50 예비 스크리닝은 이 스냅샷을 읽기만 하면 된다."""
+        if not time_utils.is_trading_day():
+            log.info("[15:35] 오늘은 휴장일/주말 - 스냅샷 계산 건너뜀 (실제 시세 변동이 없었음)")
+            return
         log.info("[15:35] 장마감 스냅샷 계산 시작")
         today = date.today().isoformat()
         try:

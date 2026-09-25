@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import date, datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
+from src.config import PROJECT_ROOT
+
 NY_TZ = ZoneInfo("America/New_York")
 
 MARKET_OPEN_ET = dtime(9, 30, 0)
@@ -27,6 +29,35 @@ ENTRY_WINDOW_LABEL = "09:30~11:00 (America/New_York)"
 # 여부를 확인 안 해서 실제로는 하나도 안 팔린 포지션들이 "청산 완료"로 잘못 기록/알림됐다.
 # 마감 몇 분 전부터 미리 시도해 진짜 체결될 시간을 준다.
 CLOSING_LIQUIDATION_BUFFER_MIN = 3
+
+_HOLIDAYS_PATH = PROJECT_ROOT / "config" / "holidays_us.txt"
+_holidays_cache: set[str] | None = None
+
+
+def _load_holidays() -> set[str]:
+    global _holidays_cache
+    if _holidays_cache is not None:
+        return _holidays_cache
+    if not _HOLIDAYS_PATH.exists():
+        _holidays_cache = set()
+        return _holidays_cache
+    _holidays_cache = {
+        line.strip() for line in _HOLIDAYS_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    return _holidays_cache
+
+
+def is_market_holiday(d: date | None = None) -> bool:
+    # 미국 세션은 KST 자정을 걸쳐 열리므로, 기준일은 "그 세션이 속하는 뉴욕 날짜"로 판단한다
+    # (뉴욕 현재시각 기준 date - 개장 전 KST 낮에 확인할 때도 오늘밤 열릴 세션의 뉴욕 날짜와 맞음).
+    d = d or now().date()
+    return d.isoformat() in _load_holidays()
+
+
+def is_trading_day(d: date | None = None) -> bool:
+    d = d or now().date()
+    return is_weekday(d) and not is_market_holiday(d)
 
 
 def now() -> datetime:

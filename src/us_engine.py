@@ -55,6 +55,9 @@ class USTradingEngine:
     async def market_open_job(self):
         if self.emergency_stopped:
             return
+        if not us_time_utils.is_trading_day():
+            log.info("[US] 오늘은 뉴욕 휴장일/주말 - 감시 개시 건너뜀")
+            return
         candidates = _load_watchlist()
         if not candidates:
             log.warning("[US] %s 가 비어있어 감시할 종목이 없습니다", WATCHLIST_PATH)

@@ -5,12 +5,41 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from src.config import CONFIG
+from src.config import CONFIG, PROJECT_ROOT
 
 # 2026-09-25 실측: "장마감 도달 그 순간" 매도를 넣으면 몇 초 차이로 KIS가 이미 "장종료" 처리를
 # 해버려 주문이 거절되는 게 실측 확인됐다(미국 계좌 실측이지만 동일 코드 경로를 쓰는 국내도
 # 같은 위험이 있음). 마감 몇 분 전부터 미리 시도해 진짜 체결될 시간을 준다.
 CLOSING_LIQUIDATION_BUFFER_MIN = 3
+
+# 2026-09-25 실측: KIS 휴장일조회 API(chk-holiday)는 모의투자 TR을 지원하지 않는다
+# (msg_cd=EGW02006 "모의투자 TR 이 아닙니다") - 파일 기반 목록으로 대체한다.
+_HOLIDAYS_PATH = PROJECT_ROOT / "config" / "holidays_kr.txt"
+_holidays_cache: set[str] | None = None
+
+
+def _load_holidays() -> set[str]:
+    global _holidays_cache
+    if _holidays_cache is not None:
+        return _holidays_cache
+    if not _HOLIDAYS_PATH.exists():
+        _holidays_cache = set()
+        return _holidays_cache
+    _holidays_cache = {
+        line.strip() for line in _HOLIDAYS_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    return _holidays_cache
+
+
+def is_market_holiday(d: date | None = None) -> bool:
+    d = d or date.today()
+    return d.isoformat() in _load_holidays()
+
+
+def is_trading_day(d: date | None = None) -> bool:
+    d = d or date.today()
+    return is_weekday(d) and not is_market_holiday(d)
 
 KOREA_HOLIDAYS_NOTE = (
     "공휴일/임시휴장일 자동 판별은 포함되어 있지 않습니다. "
