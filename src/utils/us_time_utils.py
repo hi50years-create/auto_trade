@@ -10,7 +10,7 @@ v1 범위: 정규장(09:30~16:00 ET)만 다룬다. 프리/애프터마켓, 미�
 """
 from __future__ import annotations
 
-from datetime import datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -21,6 +21,12 @@ MARKET_CLOSE_ET = dtime(16, 0, 0)
 ENTRY_WINDOW_END_ET = dtime(11, 0, 0)
 
 ENTRY_WINDOW_LABEL = "09:30~11:00 (America/New_York)"
+
+# 2026-09-25 실측: 장마감 "도달 그 순간" 매도를 넣었더니 몇 초 차이로 KIS가 이미 장종료
+# 처리를 해버려 주문이 계속 거절됐다(40580000, "모의투자 장종료 입니다") - 그런데도 성공
+# 여부를 확인 안 해서 실제로는 하나도 안 팔린 포지션들이 "청산 완료"로 잘못 기록/알림됐다.
+# 마감 몇 분 전부터 미리 시도해 진짜 체결될 시간을 준다.
+CLOSING_LIQUIDATION_BUFFER_MIN = 3
 
 
 def now() -> datetime:
@@ -49,3 +55,11 @@ def is_before_market_close(t: dtime | None = None) -> bool:
 def is_market_close_reached(t: dtime | None = None) -> bool:
     t = t or now_time()
     return t >= MARKET_CLOSE_ET
+
+
+def is_closing_liquidation_time(t: dtime | None = None) -> bool:
+    """장마감 동시청산을 "시도해야 하는" 시간대(마감 몇 분 전 ~ 마감 이후 전부)."""
+    t = t or now_time()
+    close_dt = datetime.combine(date.today(), MARKET_CLOSE_ET)
+    buffer_start = (close_dt - timedelta(minutes=CLOSING_LIQUIDATION_BUFFER_MIN)).time()
+    return t >= buffer_start

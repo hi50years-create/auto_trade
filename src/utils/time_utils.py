@@ -3,9 +3,14 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from src.config import CONFIG
+
+# 2026-09-25 실측: "장마감 도달 그 순간" 매도를 넣으면 몇 초 차이로 KIS가 이미 "장종료" 처리를
+# 해버려 주문이 거절되는 게 실측 확인됐다(미국 계좌 실측이지만 동일 코드 경로를 쓰는 국내도
+# 같은 위험이 있음). 마감 몇 분 전부터 미리 시도해 진짜 체결될 시간을 준다.
+CLOSING_LIQUIDATION_BUFFER_MIN = 3
 
 KOREA_HOLIDAYS_NOTE = (
     "공휴일/임시휴장일 자동 판별은 포함되어 있지 않습니다. "
@@ -41,6 +46,14 @@ def is_before_market_close(t: time | None = None) -> bool:
 def is_market_close_reached(t: time | None = None) -> bool:
     t = t or now_time()
     return t >= CONFIG.market_close_time
+
+
+def is_closing_liquidation_time(t: time | None = None) -> bool:
+    """장마감 동시청산을 "시도해야 하는" 시간대(마감 몇 분 전 ~ 마감 이후 전부)."""
+    t = t or now_time()
+    close_dt = datetime.combine(date.today(), CONFIG.market_close_time)
+    buffer_start = (close_dt - timedelta(minutes=CLOSING_LIQUIDATION_BUFFER_MIN)).time()
+    return t >= buffer_start
 
 
 def is_pre_screen_time(t: time | None = None) -> bool:

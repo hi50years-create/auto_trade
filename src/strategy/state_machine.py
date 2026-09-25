@@ -77,6 +77,7 @@ class StockWatcher:
         # 진입 경로 기록 (POSITION_HOLDING 청산 로직 분기에 사용).
         self.entry_reason: str | None = None
         self.structural_stop_price: float | None = None
+        self._exit_failure_notified = False  # 청산 실패 알림 스팸 방지 (재시도마다 안 보내고 1회만)
 
     def force_stop(self):
         self._stop_requested = True
@@ -297,7 +298,7 @@ class StockWatcher:
         tp_price = self.buy_price * (1 + CONFIG.target_profit_pct)
         sl_price = self.buy_price * (1 + CONFIG.stop_loss_pct)
 
-        if self.time_module.is_market_close_reached():
+        if self.time_module.is_closing_liquidation_time():
             await self._exit(rt_price, "장마감 동시청산")
             return
         if rt_price >= tp_price:
@@ -338,6 +339,35 @@ class StockWatcher:
                 log.info("[%s] 익절 지정가 부분체결(%d/%d주) - 잔여 %d주 시장가 전환 청산",
                          self.ctx.name, self.qty - remaining_qty, self.qty, remaining_qty)
             order = await asyncio.to_thread(self.broker.sell_market, self.ctx.code, remaining_qty)
+            if order.success:
+                remaining_qty = 0
+
+        if remaining_qty > 0:
+            # 2026-09-25 실측: 장마감 도달 직후 매도를 넣으면 몇 초 차이로 KIS가 이미 장종료
+            # 처리를 해버려 주문이 거절되는데(40580000 "모의투자 장종료 입니다"), 예전엔 이
+            # 실패를 확인 안 하고 무조건 "청산 완료"로 기록+알림을 보냈다 - 실제로는 하나도
+            # 안 팔린 포지션이 계속 쌓이는 사고로 이어졌다. 절대 성공으로 위장하지 않는다.
+            msg = order.message if order is not None else "매도 주문 실패"
+            log.error("[%s] 청산 주문 실패(%s): %s", self.ctx.name, reason, msg)
+            if self.time_module.is_market_close_reached():
+                # 실제 마감까지 지난 뒤에도 실패 - 더 재시도해도 체결될 가망이 없다. 포지션은
+                # 실제로 계속 보유 상태로 남으므로, 그 사실을 거짓 없이 기록하고 감시를 종료한다
+                # (exit_time/sell_price는 채우지 않음 - DB에도 "아직 안 팔렸다"가 정확히 남아야 함).
+                self.slots.release(self.ctx.code)
+                self.state = "CLOSED"
+                log.error("[%s] 장마감 이후에도 청산 실패 - 포지션이 실제로 계속 보유된 상태로 남습니다", self.ctx.name)
+                await telegram_bot.notify(
+                    f"🚨 {self.market_emoji} [청산 실패 - 수동 확인 필요] {self.ctx.name}\n사유: {reason}\n"
+                    f"매도 주문 거절: {msg}\n"
+                    f"⚠️ 이 종목은 실제로 계속 보유 중입니다. 잔고를 직접 확인해주세요."
+                )
+            elif not self._exit_failure_notified:
+                self._exit_failure_notified = True
+                await telegram_bot.notify(
+                    f"⚠️ {self.market_emoji} [청산 재시도 중] {self.ctx.name}\n사유: {reason}\n"
+                    f"매도 주문 거절: {msg}\n마감 전까지 계속 재시도합니다."
+                )
+            return
 
         # 체결가는 지정가/시장가 혼합이어도 판정가 기준으로 단순화해 기록한다 (시장가 실제 체결가는
         # 체결통보/잔고조회로 사후 보정 가능 - 기존과 동일한 단순화).
