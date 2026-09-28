@@ -181,8 +181,14 @@ class StockWatcher:
             return
 
         for _, last_bar in unprocessed.iterrows():
-            self._last_bar_time = last_bar["time"]
+            # 2026-09-28 실측: 예전엔 처리 "시도" 시점에 _last_bar_time을 먼저 전진시켜서,
+            # 이 봉을 평가하는 도중(특히 돌파 조건 통과 후 체결강도/호가잔량비 조회 중) 일시적
+            # 오류가 나면 그 예외가 run() 루프까지 그대로 전파되면서도 워터마크는 이미 전진해
+            # 있어 - 다음 틱에 이 봉을 "이미 처리함"으로 간주해 영구 스킵했다(우리넷 09:03봉
+            # 신호가 이렇게 유실된 것을 오프라인 재현으로 확인함). 성공적으로 끝났을 때만
+            # 워터마크를 전진시키도록 순서를 바꿔서, 예외 발생 시 다음 틱에 같은 봉을 재시도한다.
             entered = await self._process_bar(last_bar)
+            self._last_bar_time = last_bar["time"]
             if entered:
                 return
 
