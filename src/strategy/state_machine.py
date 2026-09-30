@@ -321,6 +321,30 @@ class StockWatcher:
             await self._exit(strategy_exit.price, strategy_exit.reason, prefer_limit=strategy_exit.prefer_limit)
             return
 
+        if self.strategy.needs_bar_based_exit:
+            bar_exit = await self._check_bar_based_exit()
+            if bar_exit is not None:
+                await self._exit(bar_exit.price, bar_exit.reason, prefer_limit=bar_exit.prefer_limit)
+                return
+
+    async def _check_bar_based_exit(self):
+        """needs_bar_based_exit=True인 전략(예: 골든크로스의 데드크로스 청산)을 위해, 보유 중에도
+        진입 판정 때와 동일한 "완성된 봉을 순서대로, 성공했을 때만 워터마크 전진" 안전장치로
+        새 봉을 공급한다. self._last_bar_time은 진입 시점 봉을 이미 가리키고 있으므로 그 이후
+        봉만 자연스럽게 잡힌다."""
+        df = await asyncio.to_thread(self.broker.get_minute_ohlcv_3m, self.ctx.code)
+        if df.empty:
+            return None
+        unprocessed = df[df["time"] > self._last_bar_time] if self._last_bar_time else df.iloc[[-1]]
+        if unprocessed.empty:
+            return None
+        for _, bar in unprocessed.iterrows():
+            signal = self.strategy.on_bar_holding(bar)
+            self._last_bar_time = bar["time"]
+            if signal is not None:
+                return signal
+        return None
+
     async def _exit(self, exit_price: float, reason: str, prefer_limit: bool = False):
         remaining_qty = self.qty
         order = None

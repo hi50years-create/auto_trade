@@ -33,6 +33,13 @@ class Strategy(ABC):
     # 전략(예: 이동평균 교차)은 False로 두면 감시 시작과 동시에 바로 봉 판정을 시작한다.
     requires_dip_below_open: bool = True
 
+    # 포지션 보유 중에도 새 봉이 완성될 때마다 on_bar_holding()을 호출해야 하는 전략이면 True.
+    # 2026-09-30 실측: 골든크로스처럼 공통 목표익절(+5%)/고정손절(-3%)이 종목 변동성에 비해
+    # 너무 넓으면(미국 대형주는 하루 종일 ±2% 안팎), 익절도 손절도 못 걸고 매번 장마감
+    # 강제청산으로만 끝난다 - 데드크로스 같은 "전략 고유" 청산 조건이 필요한 이유.
+    # False(기본값)인 전략은 이 봉 조회 자체가 생략되어 API 호출이 늘지 않는다.
+    needs_bar_based_exit: bool = False
+
     @abstractmethod
     async def on_bar(self, broker, code: str, bar, day_open: float) -> EntrySignal | None:
         """완성된 봉(3분봉 등) 하나가 들어올 때마다 호출된다. 진입 신호가 없으면 None."""
@@ -44,4 +51,9 @@ class Strategy(ABC):
         """포지션 보유 중 실시간 틱마다 호출된다. 공통 목표익절/고정손절/장마감청산은
         StockWatcher가 이미 처리하므로, 여기서는 전략 고유의 추가 청산 조건만 반환하면 된다.
         기본 구현은 없음(공통 규칙만으로 충분한 전략은 오버라이드하지 않아도 됨)."""
+        return None
+
+    def on_bar_holding(self, bar) -> ExitSignal | None:
+        """needs_bar_based_exit=True 인 전략만 오버라이드. 보유 중 완성된 봉마다 호출된다
+        (on_bar와 동일한 봉 catch-up/재시도 안전장치를 StockWatcher가 그대로 재사용한다)."""
         return None
