@@ -16,15 +16,20 @@ class GoldenCrossStrategy(Strategy):
     requires_dip_below_open = False
     needs_bar_based_exit = True
 
-    def __init__(self, short_window: int = 5, long_window: int = 20, min_volume: float = 0):
+    def __init__(self, short_window: int = 5, long_window: int = 20, min_volume: float = 0, min_hold_bars: int = 2):
         if short_window >= long_window:
             raise ValueError("short_window must be smaller than long_window")
         self.short_window = short_window
         self.long_window = long_window
         self.min_volume = min_volume
+        # 2026-09-30 실측: 진입 직후 바로 다음 봉에서 데드크로스가 떠 2~6분 만에 왕복매매가
+        # 났다(코인베이스 5분47초, AMD 2분43초). 이평선 교차는 노이즈 한 봉만으로도 뒤집힐 수
+        # 있어서, 진입 후 최소 이 봉수만큼은 데드크로스를 무시하는 쿨다운을 둔다.
+        self.min_hold_bars = min_hold_bars
         self._closes: list[float] = []
         self._prev_short_ma: float | None = None
         self._prev_long_ma: float | None = None
+        self._bars_since_entry: int | None = None  # None = 미진입 상태
 
     async def on_bar(self, broker, code: str, bar, day_open: float) -> EntrySignal | None:
         cls = float(bar["close"])
@@ -32,13 +37,16 @@ class GoldenCrossStrategy(Strategy):
         signal = self._update_ma(cls)
 
         if signal == "golden" and vol >= self.min_volume:
+            self._bars_since_entry = 0
             return EntrySignal(price=cls, reason="골든크로스")
         return None
 
     def on_bar_holding(self, bar) -> ExitSignal | None:
         cls = float(bar["close"])
         signal = self._update_ma(cls)
-        if signal == "dead":
+        if self._bars_since_entry is not None:
+            self._bars_since_entry += 1
+        if signal == "dead" and (self._bars_since_entry or 0) >= self.min_hold_bars:
             return ExitSignal(price=cls, reason="데드크로스")
         return None
 
