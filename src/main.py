@@ -456,7 +456,7 @@ async def run():
             hour=9, minute=30, day_of_week="mon-fri", timezone="America/New_York"))
         scheduler.add_job(us_engine.eod_reset_job, CronTrigger(
             hour=16, minute=0, day_of_week="mon-fri", timezone="America/New_York"))
-        log.info("미국 모의투자 엔진 활성화됨")
+        log.info("미국 %s 엔진 활성화됨", CONFIG.trading_mode.upper())
     scheduler.start()
 
     web_server = None

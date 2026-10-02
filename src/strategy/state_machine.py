@@ -402,7 +402,10 @@ class StockWatcher:
         # 체결가는 지정가/시장가 혼합이어도 판정가 기준으로 단순화해 기록한다 (시장가 실제 체결가는
         # 체결통보/잔고조회로 사후 보정 가능 - 기존과 동일한 단순화).
         actual_price = exit_price
-        profit_pct = ((actual_price - self.buy_price) / self.buy_price) * 100
+        # 2026-10-02: 매수/매도 수수료 + (국내만) 매도 증권거래세까지 반영한 실현 수익률.
+        # 이전엔 가격 차이만 보는 세전·수수료 전 값이었다 - 실전 전환 판단에 쓸 승률/손익 통계가
+        # 왜곡되지 않도록 모의투자 단계부터 net 값으로 기록한다.
+        profit_pct = CONFIG.net_profit_pct(self.buy_price, actual_price, self.currency)
 
         exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.trade_id is not None:
@@ -415,7 +418,7 @@ class StockWatcher:
         await telegram_bot.notify(
             f"{emoji} {self.market_emoji} [실시간 청산] {self.ctx.name}\n사유: {reason}\n"
             f"매수가: {self._fmt(self.buy_price)} → 청산가: {self._fmt(actual_price)}\n"
-            f"확정 수익률: {profit_pct:+.2f}%\n"
+            f"확정 수익률(수수료/세금 반영): {profit_pct:+.2f}%\n"
             f"잔여 슬롯: {self.slots.active_slots_count}/{self.slots.max_slots}\n"
             f"(주문결과: {order.message})"
         )

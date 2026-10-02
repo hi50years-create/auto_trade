@@ -122,6 +122,31 @@ class Config:
     # 실제 상한가 마감은 보통 29.5~29.9% 사이로 찍힌다.
     literal_limit_up_pct: float = field(default_factory=lambda: _get_float("LITERAL_LIMIT_UP_PCT", 29.5))
 
+    # ---------------- 수수료/세금 (2026-10-02 추가) ----------------
+    # 그동안 기록된 profit_pct는 매수가/청산가 차이만 본 "세전·수수료 전" 값이었다. 실전 전환을
+    # 준비하면서 모의투자 단계에서도 실제로 손에 남는 수익률(net)을 알아야 의미 있는 승률 판단이
+    # 되므로, 여기서 모델링한 수수료/세금을 모든 체결(모의/실전 공통)에 반영한다.
+    # 아래 수치는 KIS 온라인 주식 기본 수수료/한국 증권거래세 추정치다 - 정책/이벤트에 따라
+    # 바뀌므로, 실전 전환 전 반드시 실제 계좌의 수수료 안내 화면에서 정확한 값으로 맞출 것.
+    kr_buy_commission_pct: float = field(default_factory=lambda: _get_float("KR_BUY_COMMISSION_PCT", 0.00015))
+    kr_sell_commission_pct: float = field(default_factory=lambda: _get_float("KR_SELL_COMMISSION_PCT", 0.00015))
+    # 코스피/코스닥 매도시 부과되는 증권거래세(농특세 포함 추정치). 매수에는 부과되지 않는다.
+    kr_sell_tax_pct: float = field(default_factory=lambda: _get_float("KR_SELL_TAX_PCT", 0.0018))
+    # 해외주식(미국)은 한국식 거래세가 없고 매수/매도 모두 수수료만 부과된다 - KIS 온라인 해외주식
+    # 기본 수수료 추정치.
+    us_buy_commission_pct: float = field(default_factory=lambda: _get_float("US_BUY_COMMISSION_PCT", 0.0025))
+    us_sell_commission_pct: float = field(default_factory=lambda: _get_float("US_SELL_COMMISSION_PCT", 0.0025))
+
+    def net_profit_pct(self, buy_price: float, sell_price: float, currency: str) -> float:
+        """수수료/세금을 반영한 실현 수익률(%). currency는 "KRW" 또는 "USD"."""
+        if currency == "USD":
+            buy_fee_pct, sell_fee_pct = self.us_buy_commission_pct, self.us_sell_commission_pct
+        else:
+            buy_fee_pct, sell_fee_pct = self.kr_buy_commission_pct, self.kr_sell_commission_pct + self.kr_sell_tax_pct
+        cost = buy_price * (1 + buy_fee_pct)
+        proceeds = sell_price * (1 - sell_fee_pct)
+        return (proceeds - cost) / cost * 100
+
     # 저점 반등(눌림목) 매수: 시가 돌파 신호가 아예 없는 날(어제 급등주 차익실현 매도일)에도
     # 장중 저점을 찍고 반등하는 종목을 잡기 위한 별도 진입 경로. state_machine.py 참고.
     pullback_reversal_enabled: bool = field(

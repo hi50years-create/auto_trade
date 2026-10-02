@@ -127,7 +127,7 @@ class USTradingEngine:
 
     # ------------------------------------------------------------ EngineProtocol (telegram_bot.py 공용 인터페이스)
     async def get_status_text(self) -> str:
-        lines = [f"🇺🇸 미국 모의투자 상태 ({datetime.now():%H:%M:%S} KST)",
+        lines = [f"🇺🇸 미국 {CONFIG.trading_mode.upper()} 상태 ({datetime.now():%H:%M:%S} KST)",
                  f"활성 슬롯: {self.slots.active_slots_count}/{self.slots.max_slots}"]
         if not self.watchers:
             lines.append("감시 중인 종목이 없습니다.")
